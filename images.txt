@@ -1,1 +1,1 @@
-quay.io/skopeo/stable:latest
+# Git操作API测试 - 2025-11-21 23:50:33
