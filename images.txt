@@ -1,1 +1,7 @@
-quay.io/skopeo/stable:latest
+--platform=linux/arm64 debian:bookworm
+--platform=linux/arm64 debian:12.9
+--platform=linux/arm64 debian:bookworm-20250224
+debian:bookworm-202412231
+--platform=linux/arm64 debian:12.8
+--platform=linux/arm64 debian:bookworm-20241223
+ debian:12.8
