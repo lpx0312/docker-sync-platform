@@ -1,1 +1,1 @@
-dgtlmoon/changedetection.io:latest
+dgtlmoon/changedetection.io:latest-full
