@@ -1,1 +1,28 @@
-bitnamilegacy/postgresql:16.4.0-debian-12-r14
+alpine:3.23.0
+--platform=linux/arm64 alpine:3.23.0
+alpine:3.22.2
+--platform=linux/arm64 alpine:3.22.2
+alpine:3.21.5
+--platform=linux/arm64 alpine:3.21.5
+alpine:3.20.8
+--platform=linux/arm64 alpine:3.20.8
+alpine:3.19.9
+--platform=linux/arm64 alpine:3.19.9
+alpine:3.18.12
+--platform=linux/arm64 alpine:3.18.12
+alpine:3.17.10
+--platform=linux/arm64 alpine:3.17.10
+alpine:3.16.9
+--platform=linux/arm64 alpine:3.16.9
+alpine:3.15.11
+--platform=linux/arm64 alpine:3.15.11
+alpine:3.14.10
+--platform=linux/arm64 alpine:3.14.10
+alpine:3.13.12
+--platform=linux/arm64 alpine:3.13.12
+alpine:3.12.12
+--platform=linux/arm64 alpine:3.12.12
+alpine:3.11.13
+--platform=linux/arm64 alpine:3.11.13
+alpine:3.10.8
+--platform=linux/arm64 alpine:3.10.8
