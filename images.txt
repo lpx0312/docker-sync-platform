@@ -1,42 +1,4 @@
-node:12.22.10
-node:12.22.10-stretch
-node:12.22.10-bullseye
-node:14.21.3
-node:14.21.3-buster
-node:14.21.3-bullseye
-node:16.20.2
-node:16.20.2-buster
-node:16.20.2-bullseye
-node:16.20.2-bookworm
-node:18.19.0
-node:18.19.0-buster
-node:18.19.0-bullseye
-node:18.19.0-bookworm
-node:20.11.1
-node:20.11.1-buster
-node:20.11.1-bullseye
-node:20.11.1-bookworm
-node:22.5.1
-node:22.5.1-bullseye
-node:22.5.1-bookworm
---platform=linux/arm64 node:12.22.10
---platform=linux/arm64 node:12.22.10-stretch
---platform=linux/arm64 node:12.22.10-bullseye
---platform=linux/arm64 node:14.21.3
---platform=linux/arm64 node:14.21.3-buster
---platform=linux/arm64 node:14.21.3-bullseye
---platform=linux/arm64 node:16.20.2
---platform=linux/arm64 node:16.20.2-buster
---platform=linux/arm64 node:16.20.2-bullseye
---platform=linux/arm64 node:16.20.2-bookworm
---platform=linux/arm64 node:18.19.0
---platform=linux/arm64 node:18.19.0-buster
---platform=linux/arm64 node:18.19.0-bullseye
---platform=linux/arm64 node:18.19.0-bookworm
---platform=linux/arm64 node:20.11.1
---platform=linux/arm64 node:20.11.1-buster
---platform=linux/arm64 node:20.11.1-bullseye
---platform=linux/arm64 node:20.11.1-bookworm
---platform=linux/arm64 node:22.5.1
---platform=linux/arm64 node:22.5.1-bullseye
---platform=linux/arm64 node:22.5.1-bookworm
+rockylinux:9.3.20231119
+--platform=linux/arm64 rockylinux:9.3.20231119
+rockylinux:8.9.20231119
+--platform=linux/arm64 rockylinux:8.9.20231119
