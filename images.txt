@@ -1,4 +1,2 @@
-quay.io/metallb/controller:v0.13.10
---platform=linux/arm64 quay.io/metallb/controller:v0.13.10
-quay.io/metallb/speaker:v0.13.10
---platform=linux/arm64 quay.io/metallb/speaker:v0.13.10
+traefik:v3.6.5
+--platform=linux/arm64 traefik:v3.6.5
