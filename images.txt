@@ -1,4 +1,2 @@
-rockylinux:9.3.20231119
---platform=linux/arm64 rockylinux:9.3.20231119
-rockylinux:8.9.20231119
---platform=linux/arm64 rockylinux:8.9.20231119
+traefik:v2.11.2
+--platform=linux/arm64 traefik:v2.11.2
