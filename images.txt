@@ -1,2 +1,2 @@
-registry.k8s.io/e2e-test-images/agnhost:2.39
---platform=linux/arm64 registry.k8s.io/e2e-test-images/agnhost:2.39
+rustdesk/rustdesk-server:latest
+--platform=linux/arm64 rustdesk/rustdesk-server:latest
