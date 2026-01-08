@@ -1,2 +1,2 @@
-eeclipse-temurin:17-jdk-jammy
---platform=linux/arm64 eeclipse-temurin:17-jdk-jammy
+eclipse-temurin:17-jdk-jammy
+--platform=linux/arm64 eclipse-temurin:17-jdk-jammy
