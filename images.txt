@@ -1,2 +1,2 @@
-rustdesk/rustdesk-server:latest
---platform=linux/arm64 rustdesk/rustdesk-server:latest
+ubuntu:24.04
+--platform=linux/arm64 ubuntu:24.04
