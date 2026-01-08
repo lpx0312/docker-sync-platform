@@ -1,2 +1,1 @@
-ubuntu:24.04
---platform=linux/arm64 ubuntu:24.04
+openjdk:17-slim
