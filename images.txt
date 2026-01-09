@@ -1,1 +1,1 @@
-eclipse-temurin:17-jdk-focal
+jenkins/jnlp-slave:3.14-1
