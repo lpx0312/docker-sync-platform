@@ -1,1 +1,2 @@
-openjdk:17
+nacos/nacos-server:v3.1.1
+--platform=linux/arm64 nacos/nacos-server:v3.1.1
