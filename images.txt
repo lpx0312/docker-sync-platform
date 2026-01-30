@@ -1,2 +1,5 @@
-nacos/nacos-server:v3.1.1
---platform=linux/arm64 nacos/nacos-server:v3.1.1
+centos:6.10
+centos:6.9
+centos:6.8
+centos:6.7
+centos:6.6
