@@ -1,5 +1,2 @@
-centos:6.10
-centos:6.9
-centos:6.8
-centos:6.7
-centos:6.6
+golang:alpine
+--platform=linux/arm64 golang:alpine
