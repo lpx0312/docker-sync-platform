@@ -1,2 +1,1 @@
-golang:alpine
---platform=linux/arm64 golang:alpine
+yan5xu/ququ:latest
