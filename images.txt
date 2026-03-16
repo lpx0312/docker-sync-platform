@@ -1,2 +1,2 @@
-maven:3.9.11-eclipse-temurin-17-noble
---platform=linux/arm64 maven:3.9.11-eclipse-temurin-17-noble
+quay.io/tigera/operator:v1.30.9
+--platform=linux/arm64 quay.io/tigera/operator:v1.30.9
