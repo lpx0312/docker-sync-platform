@@ -1,2 +1,2 @@
-quay.io/minio/minio:latest
---platform=linux/arm64 quay.io/minio/minio:latest
+velero/velero-plugin-for-aws:v1.11.1
+--platform=linux/arm64 velero/velero-plugin-for-aws:v1.11.1
