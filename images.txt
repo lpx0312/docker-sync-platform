@@ -1,1 +1,1 @@
-longhornio/backing-image-manager:master-head
+longhornio/longhorn-engine:master-head
