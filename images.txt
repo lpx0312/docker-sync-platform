@@ -1,2 +1,2 @@
-velero/velero:v1.15.2
---platform=linux/arm64 velero/velero:v1.15.2
+velero/velero-restore-helper:v1.15.2
+--platform=linux/arm64 velero/velero-restore-helper:v1.15.2
