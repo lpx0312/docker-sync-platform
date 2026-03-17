@@ -1,2 +1,2 @@
-velero/velero-plugin-for-aws:v1.11.1
---platform=linux/arm64 velero/velero-plugin-for-aws:v1.11.1
+velero/velero:v1.15.2
+--platform=linux/arm64 velero/velero:v1.15.2
