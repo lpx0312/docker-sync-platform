@@ -1,2 +1,2 @@
-quay.io/tigera/operator:v1.30.9
---platform=linux/arm64 quay.io/tigera/operator:v1.30.9
+docker.io/calico/apiserver:v3.26.4
+--platform=linux/arm64 docker.io/calico/apiserver:v3.26.4
