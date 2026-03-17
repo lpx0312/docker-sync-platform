@@ -1,2 +1,1 @@
-velero/velero-restore-helper:v1.15.2
---platform=linux/arm64 velero/velero-restore-helper:v1.15.2
+longhornio/backing-image-manager:master-head
