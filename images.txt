@@ -1,2 +1,2 @@
-docker.io/calico/apiserver:v3.26.4
---platform=linux/arm64 docker.io/calico/apiserver:v3.26.4
+quay.io/minio/minio:latest
+--platform=linux/arm64 quay.io/minio/minio:latest
