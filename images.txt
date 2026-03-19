@@ -1,2 +1,1 @@
-jenkins/jenkins:2.453-jdk11
---platform=linux/arm64 jenkins/jenkins:2.453-jdk11
+jenkins/jenkins:2.319.1-jdk11
