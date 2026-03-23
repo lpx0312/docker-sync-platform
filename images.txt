@@ -1,1 +1,1 @@
-jenkins/jenkins:2.345-jdk11
+docker.io/calico/apiserver:v3.25.1
