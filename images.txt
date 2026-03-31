@@ -1,9 +1,2 @@
-bats/bats:v1.4.1
-grafana/grafana:9.3.6
-quay.io/kiwigrid/k8s-sidecar:1.22.0
-quay.io/prometheus/alertmanager:v0.25.0
-quay.io/prometheus/node-exporter:v1.5.0
-quay.io/prometheus-operator/prometheus-operator:v0.63.0
-quay.io/prometheus/prometheus:v2.42.0
-registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.3.0
-registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.7.0
+postgres:14.22-alpine3.23
+--platform=linux/arm64 postgres:14.22-alpine3.23
