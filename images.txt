@@ -1,1 +1,1 @@
-docker.io/calico/apiserver:v3.25.1
+nginx:1.18.0
