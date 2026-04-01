@@ -1,1 +1,1 @@
-postgres:13.23-alpine3.21
+rancher/local-path-provisioner:v0.0.35
