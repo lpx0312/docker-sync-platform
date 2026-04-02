@@ -1,1 +1,1 @@
-busybox:latest
+--platform=linux/arm64 postgres:13.23-alpine3.21
