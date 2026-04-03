@@ -1,1 +1,2 @@
-redis:6.2.21
+golang:1.26.1-alpine3.23
+--platform=linux/arm64 golang:1.26.1-alpine3.23
