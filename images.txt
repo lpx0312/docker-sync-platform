@@ -1,1 +1,1 @@
-ghcr.io/hay-kot/homebox:latest
+xgheaven/homebox:latest
