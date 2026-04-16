@@ -1,2 +1,2 @@
-dhi.io/curl:8-alpine3.23
---platform=linux/arm64 dhi.io/curl:8-alpine3.23
+curlimages/curl:8.13.0
+--platform=linux/arm64 curlimages/curl:8.13.0
