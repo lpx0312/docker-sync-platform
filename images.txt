@@ -1,3 +1,2 @@
-bats/bats:1.8.2
-docker.io/grafana/promtail:3.5.1
-grafana/loki:2.6.1
+busybox:1.37.0
+--platform=linux/arm64 busybox:1.37.0
