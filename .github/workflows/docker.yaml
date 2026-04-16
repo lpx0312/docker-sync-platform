@@ -10,7 +10,9 @@ env:
   ALIYUN_NAME_SPACE: "${{ secrets.ALIYUN_NAME_SPACE }}"
   ALIYUN_REGISTRY_USER: "${{ secrets.ALIYUN_REGISTRY_USER }}"
   ALIYUN_REGISTRY_PASSWORD: "${{ secrets.ALIYUN_REGISTRY_PASSWORD }}"
-
+  DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}"
+  DOCKERHUB_PASSWORD: "${{ secrets.DOCKERHUB_PASSWORD }}"
+  
 jobs:
   build:
     name: Pull
