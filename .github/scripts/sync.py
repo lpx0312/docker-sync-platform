@@ -86,7 +86,7 @@ async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
 # ---------------------------
 # 登录函数（skopeo login）
 # ---------------------------
-async def skopeo_login():
+async def skopeo_login_acr():
     _log(f"[LOGIN] Attempting skopeo login to {ALIYUN_REGISTRY}")
     cmd = ["skopeo", "login", "-u", ALIYUN_REGISTRY_USER, "-p", ALIYUN_REGISTRY_PASSWORD, ALIYUN_REGISTRY]
     rc, out, err = await run_cmd(cmd, timeout=60)
@@ -94,6 +94,26 @@ async def skopeo_login():
         _log(f"[LOGIN] FAILED rc={rc}\nSTDOUT: {out}\nSTDERR: {err}")
         raise SystemExit(1)
     _log(f"[LOGIN] Success\n{out}")
+
+# --------------------------- #
+# 登录函数（skopeo login dockerhub）
+# --------------------------- #
+async def skopeo_login_dockerhub():
+    DOCKERHUB_REGISTRY = "docker.io"
+    _log(f"[LOGIN] Attempting skopeo login to {DOCKERHUB_REGISTRY}")
+    cmd = [
+        "skopeo",
+        "login",
+        "-u", DOCKERHUB_USERNAME,
+        "-p", DOCKERHUB_PASSWORD,
+        DOCKERHUB_REGISTRY
+    ]
+    rc, out, err = await run_cmd(cmd, timeout=60)
+    if rc != 0:
+        _log(f"[LOGIN] FAILED rc={rc}\nSTDOUT: {out}\nSTDERR: {err}")
+        raise SystemExit(1)
+    _log(f"[LOGIN] Success\n{out}")
+
 
 # ---------------------------
 # 解析 images.txt
@@ -234,7 +254,8 @@ async def main():
     _log(f"Skopeo version: {out.strip()}")
 
     # login
-    await skopeo_login()
+    await skopeo_login_acr()
+    await skopeo_login_dockerhub()
 
     # parse images
     lines = parse_images_file(IMAGES_FILE)
