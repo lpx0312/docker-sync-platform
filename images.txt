@@ -1,12 +1,2 @@
 maven:3.9.12-eclipse-temurin-25
 --platform=linux/arm64 maven:3.9.12-eclipse-temurin-25
-maven:3.9.12-eclipse-temurin-23
---platform=linux/arm64 maven:3.9.12-eclipse-temurin-23
-maven:3.9.12-eclipse-temurin-21
---platform=linux/arm64 maven:3.9.12-eclipse-temurin-21
-maven:3.9.12-eclipse-temurin-17
---platform=linux/arm64 maven:3.9.12-eclipse-temurin-17
-maven:3.9.12-eclipse-temurin-11
---platform=linux/arm64 maven:3.9.12-eclipse-temurin-11
-maven:3.9.12-eclipse-temurin-8
---platform=linux/arm64 maven:3.9.12-eclipse-temurin-8
