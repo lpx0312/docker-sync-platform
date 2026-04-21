@@ -1,1 +1,2 @@
-nginx:1.26.1
+mavan:3.9.12-eclipse-temurin-8
+--platform=linux/arm64 mavan:3.9.12-eclipse-temurin-8
