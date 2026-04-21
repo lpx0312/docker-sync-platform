@@ -1,12 +1,1 @@
-mavan:3.9.12-eclipse-temurin-25
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-25
-mavan:3.9.12-eclipse-temurin-23
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-23
-mavan:3.9.12-eclipse-temurin-21
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-21
-mavan:3.9.12-eclipse-temurin-17
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-17
-mavan:3.9.12-eclipse-temurin-11
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-11
-mavan:3.9.12-eclipse-temurin-8
---platform=linux/arm64 mavan:3.9.12-eclipse-temurin-8
+nginx:1.26.1
