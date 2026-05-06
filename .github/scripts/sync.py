@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
-# .github/scripts/sync.py
-# Python 3.12 compatible
-"""
-并行 Skopeo 同步脚本（适用于 Skopeo 1.13.1）
-- 并发执行 skopeo copy（通过 asyncio.subprocess）
-- 不使用 --image-parallel-copies
-- 支持重试、超时、详细日志、summary
-"""
+# -*- coding: utf-8 -*-
 
 import asyncio
+import json
 import os
-import re
 import sys
 import time
 from typing import List, Dict, Tuple
 
 # ---------------------------
-# 配置（按需调整）
+# 配置
 # ---------------------------
 IMAGES_FILE = "images.txt"
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "8"))  # 并发任务数
-RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))       # 失败重试次数（不含首次尝试）
-PER_IMAGE_TIMEOUT = int(os.getenv("PER_IMAGE_TIMEOUT", str(20 * 60)))  # 单镜像超时秒，默认 20min
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "6"))
+RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))
+PER_IMAGE_TIMEOUT = int(os.getenv("PER_IMAGE_TIMEOUT", str(20 * 60)))
 LOG_FILE = os.getenv("SYNC_LOG_FILE", "sync.log")
 
-# GitHub Action 环境变量（从 workflow env/secrets 传入）
 ALIYUN_REGISTRY = os.getenv("ALIYUN_REGISTRY")
 ALIYUN_NAME_SPACE = os.getenv("ALIYUN_NAME_SPACE")
 ALIYUN_REGISTRY_USER = os.getenv("ALIYUN_REGISTRY_USER")
@@ -32,99 +24,113 @@ ALIYUN_REGISTRY_PASSWORD = os.getenv("ALIYUN_REGISTRY_PASSWORD")
 DOCKERHUB_USERNAME = os.getenv("DOCKERHUB_USERNAME")
 DOCKERHUB_PASSWORD = os.getenv("DOCKERHUB_PASSWORD")
 
+ARCH_CACHE: Dict[str, List[str]] = {}
+
 if not all([ALIYUN_REGISTRY, ALIYUN_NAME_SPACE, ALIYUN_REGISTRY_USER, ALIYUN_REGISTRY_PASSWORD]):
-    print("ERROR: 必须设置 ALIYUN_REGISTRY/ALIYUN_NAME_SPACE/ALIYUN_REGISTRY_USER/ALIYUN_REGISTRY_PASSWORD 环境变量", file=sys.stderr)
+    print("ERROR: missing aliyun registry env", file=sys.stderr)
     sys.exit(1)
 
 # ---------------------------
-# 日志工具（同时打印并写文件）
+# 日志
 # ---------------------------
 _log_fh = None
+
 def _open_log():
     global _log_fh
     _log_fh = open(LOG_FILE, "a", encoding="utf-8")
-    _log("=== START SYNC LOG ===\n")
+    _log("=== START SYNC LOG ===")
 
 def _close_log():
     global _log_fh
     if _log_fh:
-        _log("=== END SYNC LOG ===\n")
+        _log("=== END SYNC LOG ===")
         _log_fh.close()
         _log_fh = None
 
 def _log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     line = f"[{ts}] {msg}"
-    print(line)
+    print(line, flush=True)
     if _log_fh:
         _log_fh.write(line + "\n")
         _log_fh.flush()
 
 # ---------------------------
-# asyncio 命令执行
+# 异步命令执行
 # ---------------------------
 async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
-    """
-    返回 (returncode, stdout, stderr)
-    """
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
         outs, errs = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return proc.returncode, (outs.decode(errors="ignore") if outs else ""), (errs.decode(errors="ignore") if errs else "")
+        return proc.returncode, outs.decode(errors="ignore"), errs.decode(errors="ignore")
     except asyncio.TimeoutError:
-        # 超时：杀掉进程
         try:
             proc.kill()
-        except Exception:
+        except:
             pass
         return 124, "", f"TIMEOUT after {timeout}s"
     except Exception as e:
-        return 125, "", f"EXCEPTION: {e}"
+        return 125, "", str(e)
 
 # ---------------------------
-# 登录函数（skopeo login）
+# 镜像引用标准化
 # ---------------------------
-async def skopeo_login_acr():
-    _log(f"[LOGIN] Attempting skopeo login to {ALIYUN_REGISTRY}")
-    cmd = ["skopeo", "login", "-u", ALIYUN_REGISTRY_USER, "-p", ALIYUN_REGISTRY_PASSWORD, ALIYUN_REGISTRY]
-    rc, out, err = await run_cmd(cmd, timeout=60)
+def normalize_image_reference(image: str):
+    image = image.strip()
+    first_part = image.split("/")[0]
+
+    if "." in first_part or ":" in first_part:
+        source_ref = f"docker://{image}"
+        clean_name = image.split("/", 1)[1]
+    else:
+        if image.count("/") == 0:
+            source_ref = f"docker://docker.io/library/{image}"
+            clean_name = image
+        else:
+            source_ref = f"docker://docker.io/{image}"
+            clean_name = image
+
+    return source_ref, clean_name
+
+# ---------------------------
+# 登录
+# ---------------------------
+async def skopeo_login():
+    _log("[LOGIN] aliyun registry")
+    rc, out, err = await run_cmd([
+        "skopeo", "login",
+        "-u", ALIYUN_REGISTRY_USER,
+        "-p", ALIYUN_REGISTRY_PASSWORD,
+        ALIYUN_REGISTRY
+    ], timeout=60)
     if rc != 0:
-        _log(f"[LOGIN] FAILED rc={rc}\nSTDOUT: {out}\nSTDERR: {err}")
-        raise SystemExit(1)
-    _log(f"[LOGIN] Success\n{out}")
+        _log(err)
+        sys.exit(1)
 
-# --------------------------- #
-# 登录函数（skopeo login dockerhub）
-# --------------------------- #
-async def skopeo_login_dockerhub():
-    DOCKERHUB_REGISTRY = "docker.io"
-    _log(f"[LOGIN] Attempting skopeo login to {DOCKERHUB_REGISTRY}")
-    cmd = [
-        "skopeo",
-        "login",
+    _log("[LOGIN] dockerhub")
+    rc, out, err = await run_cmd([
+        "skopeo", "login",
         "-u", DOCKERHUB_USERNAME,
         "-p", DOCKERHUB_PASSWORD,
-        DOCKERHUB_REGISTRY
-    ]
-    rc, out, err = await run_cmd(cmd, timeout=60)
+        "docker.io"
+    ], timeout=60)
     if rc != 0:
-        _log(f"[LOGIN] FAILED rc={rc}\nSTDOUT: {out}\nSTDERR: {err}")
-        raise SystemExit(1)
-    _log(f"[LOGIN] Success\n{out}")
-
+        _log(err)
+        sys.exit(1)
 
 # ---------------------------
-# 解析 images.txt
+# 读取镜像
 # ---------------------------
 def parse_images_file(path: str) -> List[str]:
-    lines: List[str] = []
     if not os.path.exists(path):
-        _log(f"ERROR: images file not found: {path}")
+        _log(f"images file not found: {path}")
         sys.exit(1)
+
+    lines = []
     with open(path, "r", encoding="utf-8") as fh:
         for raw in fh:
             line = raw.strip()
@@ -134,45 +140,92 @@ def parse_images_file(path: str) -> List[str]:
     return lines
 
 # ---------------------------
-# 检测重复镜像名字（保留原有逻辑）
+# 重名检测
 # ---------------------------
 def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
-    temp_map: Dict[str, str] = {}
-    duplicates: Dict[str, bool] = {}
-    for line in lines:
-        image = line.split()[-1]
-        image = image.split("@")[0]  # 去掉 digest
-        parts = image.split("/")
+    temp_map = {}
+    duplicates = {}
+
+    for image in lines:
+        _, clean_name = normalize_image_reference(image)
+
+        image_no_digest = clean_name.split("@")[0]
+        parts = image_no_digest.split("/")
         image_name_tag = parts[-1]
         image_name = image_name_tag.split(":")[0]
 
-        if len(parts) == 3:
-            namespace = parts[1]
-        elif len(parts) == 2:
-            namespace = parts[0]
-        else:
-            namespace = ""
-        namespace = f"{namespace}_"
+        namespace = parts[-2] if len(parts) >= 2 else "library"
 
         if image_name in temp_map and temp_map[image_name] != namespace:
             duplicates[image_name] = True
         else:
             temp_map[image_name] = namespace
+
     return duplicates
 
 # ---------------------------
-# 构造 skopeo copy 命令（不包含 --image-parallel-copies）
+# 架构探测
 # ---------------------------
-def build_skopeo_copy_cmd(line: str, duplicates: Dict[str,bool]) -> Tuple[str, str, List[str]]:
-    # 解析 platform 参数：支持 "--platform linux/arm64" 或 "--platform=linux/arm64"
-    platform = None
-    m = re.search(r"--platform(?:[ =])([^ \t]+)", line)
-    if m:
-        platform = m.group(1).strip()
+async def detect_source_architectures(image: str) -> List[str]:
+    source, _ = normalize_image_reference(image)
 
-    image = line.split()[-1]
-    image_no_digest = image.split("@")[0]
+    rc, out, err = await run_cmd([
+        "skopeo", "inspect", "--raw", source
+    ], timeout=120)
+
+    if rc != 0:
+        _log(f"[ARCH DETECT] inspect failed for {image}: {err}")
+        return []
+
+    archs = set()
+
+    try:
+        data = json.loads(out)
+
+        if "manifests" in data:
+            for item in data["manifests"]:
+                platform = item.get("platform", {})
+                arch = platform.get("architecture")
+                os_name = platform.get("os")
+                if os_name == "linux" and arch:
+                    archs.add(arch)
+
+        elif "architecture" in data:
+            arch = data.get("architecture")
+            os_name = data.get("os", "linux")
+            if os_name == "linux" and arch:
+                archs.add(arch)
+
+    except Exception as e:
+        _log(f"[ARCH DETECT] json parse failed for {image}: {e}")
+        return []
+
+    return list(archs)
+
+async def prefetch_all_architectures(images: List[str]):
+    global ARCH_CACHE
+
+    _log("=== PREFETCH IMAGE ARCHITECTURES START ===")
+    sem = asyncio.Semaphore(8)
+
+    async def _worker(img: str):
+        async with sem:
+            archs = await detect_source_architectures(img)
+            ARCH_CACHE[img] = archs
+            _log(f"[PREFETCH] {img} -> {archs}")
+
+    await asyncio.gather(*[_worker(i) for i in images])
+    _log("=== PREFETCH IMAGE ARCHITECTURES END ===")
+
+# ---------------------------
+# 构造copy命令
+# ---------------------------
+def build_arch_copy_cmd(image: str, arch: str, duplicates: Dict[str, bool]):
+    source, clean_name = normalize_image_reference(image)
+
+    image_no_digest = clean_name.split("@")[0]
     parts = image_no_digest.split("/")
+
     image_name_tag = parts[-1]
     image_name = image_name_tag.split(":")[0]
 
@@ -180,128 +233,188 @@ def build_skopeo_copy_cmd(line: str, duplicates: Dict[str,bool]) -> Tuple[str, s
     if image_name in duplicates:
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
-        else:
-            prefix = ""
 
-    platform_suffix = ""
-    if platform:
-        platform_suffix = "-" + platform.replace("/", "-")
+    tmp_target = f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}-{arch}-tmp"
+    final_target = f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}"
 
-    source = f"docker://{image_no_digest}"
-    target = f"docker://{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}{platform_suffix}"
+    cmd = [
+        "skopeo", "copy",
+        "--override-os", "linux",
+        "--override-arch", arch,
+        source,
+        f"docker://{tmp_target}"
+    ]
 
-    cmd = ["skopeo", "copy"]
-    # 如果指定 platform，使用 override-os/override-arch（skopeo 支持）
-    if platform:
-        # 如果用户写错 platform（比如只有 arch），尽量鲁棒处理
-        parts_p = platform.split("/")
-        override_os = parts_p[0] if len(parts_p) >= 1 and parts_p[0] else "linux"
-        override_arch = parts_p[1] if len(parts_p) >= 2 and parts_p[1] else "amd64"
-        cmd += ["--override-os", override_os, "--override-arch", override_arch]
-
-    cmd += [source, target]
-    return source, target, cmd
+    return source, tmp_target, final_target, cmd
 
 # ---------------------------
-# 单条同步任务（包含重试）
+# 删除镜像
 # ---------------------------
-async def sync_image_task(line: str, duplicates: Dict[str,bool], semaphore: asyncio.Semaphore, index: int) -> Tuple[int, str]:
-    """
-    返回 (rc, target)
-    """
+async def delete_image(target: str):
+    await run_cmd([
+        "skopeo", "delete",
+        "--creds", f"{ALIYUN_REGISTRY_USER}:{ALIYUN_REGISTRY_PASSWORD}",
+        f"docker://{target}"
+    ], timeout=60)
+
+# ---------------------------
+# manifest merge
+# ---------------------------
+async def merge_manifest(final_target: str, template_target: str, index: int):
+    cmd = [
+        "manifest-tool",
+        "--username", ALIYUN_REGISTRY_USER,
+        "--password", ALIYUN_REGISTRY_PASSWORD,
+        "push", "from-args",
+        "--platforms", "linux/amd64,linux/arm64",
+        "--template", template_target,
+        "--target", final_target
+    ]
+
+    _log(f"[{index}] MERGE -> {final_target}")
+    rc, out, err = await run_cmd(cmd, timeout=300)
+    if rc != 0:
+        _log(f"[{index}] MERGE FAILED: {err}")
+        return False
+    return True
+
+# ---------------------------
+# 单镜像同步
+# ---------------------------
+async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: asyncio.Semaphore, index: int):
     async with semaphore:
-        source, target, cmd = build_skopeo_copy_cmd(line, duplicates)
-        attempt = 0
-        last_err = ""
         start_ts = time.time()
-        while attempt <= RETRY_COUNT:
-            attempt += 1
-            _log(f"[{index}] START attempt={attempt}  Source={source}  Target={target}")
-            _log(f"[{index}] CMD: {' '.join(cmd)}")
-            rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
-            elapsed = time.time() - start_ts
-            if rc == 0:
-                _log(f"[{index}] SUCCESS (attempt={attempt}) ({elapsed:.1f}s) -> {target}")
-                if out:
-                    _log(f"[{index}] STDOUT:\n{out.strip()}")
-                return 0, target
-            else:
-                last_err = err or out or f"rc={rc}"
-                _log(f"[{index}] FAILED (attempt={attempt}) rc={rc} ({elapsed:.1f}s)")
-                if out:
-                    _log(f"[{index}] STDOUT:\n{out.strip()}")
-                if err:
-                    _log(f"[{index}] STDERR:\n{err.strip()}")
+        final_target = ""
+
+        for attempt in range(1, RETRY_COUNT + 2):
+            amd_tmp = None
+            arm_tmp = None
+
+            try:
+                _log(f"[{index}] START {image} attempt={attempt}")
+                supported_archs = ARCH_CACHE.get(image, [])
+                _log(f"[{index}] SUPPORTED ARCHS: {supported_archs}")
+
+                if not supported_archs:
+                    raise Exception("no supported architecture")
+
+                if "amd64" in supported_archs:
+                    _, amd_tmp, final_target, cmd_amd = build_arch_copy_cmd(image, "amd64", duplicates)
+                    await delete_image(amd_tmp)
+                    rc, out, err = await run_cmd(cmd_amd, timeout=PER_IMAGE_TIMEOUT)
+                    if rc != 0:
+                        raise Exception(f"amd64 copy failed: {err}")
+
+                if "arm64" in supported_archs:
+                    _, arm_tmp, final_target, cmd_arm = build_arch_copy_cmd(image, "arm64", duplicates)
+                    await delete_image(arm_tmp)
+                    rc, out, err = await run_cmd(cmd_arm, timeout=PER_IMAGE_TIMEOUT)
+                    if rc != 0:
+                        raise Exception(f"arm64 copy failed: {err}")
+
+                await delete_image(final_target)
+
+                if "amd64" in supported_archs and "arm64" in supported_archs:
+                    image_name_tag = final_target.split("/")[-1]
+                    template = final_target.replace(image_name_tag, image_name_tag + "-ARCH-tmp")
+
+                    merged = await merge_manifest(final_target, template, index)
+                    if not merged:
+                        raise Exception("manifest merge failed")
+
+                    await delete_image(amd_tmp)
+                    await delete_image(arm_tmp)
+
+                else:
+                    single_arch = "amd64" if "amd64" in supported_archs else "arm64"
+                    source_ref, _ = normalize_image_reference(image)
+
+                    cmd_direct = [
+                        "skopeo", "copy",
+                        "--override-os", "linux",
+                        "--override-arch", single_arch,
+                        source_ref,
+                        f"docker://{final_target}"
+                    ]
+
+                    rc, out, err = await run_cmd(cmd_direct, timeout=PER_IMAGE_TIMEOUT)
+                    if rc != 0:
+                        raise Exception(f"single arch final push failed: {err}")
+
+                    if amd_tmp:
+                        await delete_image(amd_tmp)
+                    if arm_tmp:
+                        await delete_image(arm_tmp)
+
+                elapsed = time.time() - start_ts
+                _log(f"[{index}] SUCCESS ({elapsed:.1f}s) -> {final_target}")
+                return 0, final_target
+
+            except Exception as e:
+                _log(f"[{index}] FAILED attempt={attempt}: {e}")
                 if attempt <= RETRY_COUNT:
                     backoff = 2 ** (attempt - 1)
-                    _log(f"[{index}] Retrying after {backoff}s...")
+                    _log(f"[{index}] retry after {backoff}s")
                     await asyncio.sleep(backoff)
                 else:
-                    _log(f"[{index}] Exhausted retries for {target}")
-                    return rc or 1, target
+                    if amd_tmp:
+                        await delete_image(amd_tmp)
+                    if arm_tmp:
+                        await delete_image(arm_tmp)
+                    return 1, final_target or image
 
 # ---------------------------
 # 主入口
 # ---------------------------
 async def main():
     _open_log()
-    _log(f"CONFIG: MAX_CONCURRENT={MAX_CONCURRENT} RETRY_COUNT={RETRY_COUNT} PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}s")
+    _log(f"CONFIG: MAX_CONCURRENT={MAX_CONCURRENT} RETRY_COUNT={RETRY_COUNT} PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}")
 
-    # 检查 skopeo 是否存在
     rc, out, err = await run_cmd(["skopeo", "--version"], timeout=10)
     if rc != 0:
-        _log(f"ERROR: skopeo not found or failed to run. rc={rc}\n{err}")
-        _close_log()
+        _log("skopeo not found")
         sys.exit(1)
-    _log(f"Skopeo version: {out.strip()}")
 
-    # login
-    await skopeo_login_acr()
-    await skopeo_login_dockerhub()
+    rc, out, err = await run_cmd(["manifest-tool", "--version"], timeout=10)
+    if rc != 0:
+        _log("manifest-tool not found")
+        sys.exit(1)
 
-    # parse images
+    await skopeo_login()
+
     lines = parse_images_file(IMAGES_FILE)
     duplicates = detect_duplicates(lines)
-    _log(f"Parsed {len(lines)} images. Duplicates: {list(duplicates.keys())}")
+
+    await prefetch_all_architectures(lines)
+
+    _log(f"TOTAL IMAGES: {len(lines)}")
+    _log(f"DUPLICATES: {list(duplicates.keys())}")
 
     sem = asyncio.Semaphore(MAX_CONCURRENT)
-    tasks = []
-    for i, line in enumerate(lines, start=1):
-        tasks.append(sync_image_task(line, duplicates, sem, i))
+    tasks = [sync_image_task(img, duplicates, sem, i) for i, img in enumerate(lines, 1)]
+    results = await asyncio.gather(*tasks)
 
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    total = len(lines)
     success = 0
-    failed_items = []
-    for r in results:
-        if isinstance(r, tuple):
-            rc, target = r
-            if rc == 0:
-                success += 1
-            else:
-                failed_items.append((target, rc))
-        else:
-            # 异常
-            _log(f"Task exception: {r}")
-            failed_items.append(("unknown", 1))
+    failed = []
 
-    _log("\n===== SUMMARY =====")
-    _log(f"Total: {total}, Success: {success}, Failed: {len(failed_items)}")
-    if failed_items:
-        for t, rc in failed_items:
-            _log(f"FAILED: {t} rc={rc}")
+    for rc, target in results:
+        if rc == 0:
+            success += 1
+        else:
+            failed.append(target)
+
+    _log("===== SUMMARY =====")
+    _log(f"SUCCESS: {success}")
+    _log(f"FAILED : {len(failed)}")
+
+    for item in failed:
+        _log(f"FAILED IMAGE: {item}")
 
     _close_log()
-    if failed_items:
+
+    if failed:
         sys.exit(1)
-    else:
-        sys.exit(0)
+    sys.exit(0)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        _log("Interrupted by user")
-        _close_log()
-        raise
+    asyncio.run(main())
