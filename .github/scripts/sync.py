@@ -80,22 +80,38 @@ async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
 # 镜像引用标准化
 # ---------------------------
 def normalize_image_reference(image: str):
+    """
+    返回:
+      source_ref: skopeo完整源引用
+      clean_name: 用于目标仓库命名
+    """
     image = image.strip()
-    first_part = image.split("/")[0]
 
-    if "." in first_part or ":" in first_part:
-        source_ref = f"docker://{image}"
-        clean_name = image.split("/", 1)[1]
+    if "/" in image:
+        first_part = image.split("/")[0]
+
+        # 明确像仓库域名
+        if "." in first_part or first_part == "localhost":
+            source_ref = f"docker://{image}"
+            clean_name = image.split("/", 1)[1]
+            return source_ref, clean_name
+
+        # host:port 场景
+        if ":" in first_part and "/" in image:
+            source_ref = f"docker://{image}"
+            clean_name = image.split("/", 1)[1]
+            return source_ref, clean_name
+
+    # dockerhub官方库
+    if image.count("/") == 0:
+        source_ref = f"docker://docker.io/library/{image}"
+        clean_name = image
     else:
-        if image.count("/") == 0:
-            source_ref = f"docker://docker.io/library/{image}"
-            clean_name = image
-        else:
-            source_ref = f"docker://docker.io/{image}"
-            clean_name = image
+        # dockerhub namespace库
+        source_ref = f"docker://docker.io/{image}"
+        clean_name = image
 
     return source_ref, clean_name
-
 # ---------------------------
 # 登录
 # ---------------------------
