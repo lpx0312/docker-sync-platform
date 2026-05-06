@@ -1,2 +1,2 @@
 node:18.0
---platform=linux/arm64 node:18.0
+quay.io/prometheus/node-exporter:v1.8.1
