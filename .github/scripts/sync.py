@@ -179,6 +179,13 @@ def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
 
     return duplicates
 
+async def run_copy_cmd(cmd: List[str], arch: str, index: int):
+    _log(f"[{index}] COPY {arch} START")
+    rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
+    if rc != 0:
+        raise Exception(f"{arch} copy failed: {err}")
+    _log(f"[{index}] COPY {arch} DONE")
+
 # ---------------------------
 # 架构探测
 # ---------------------------
@@ -314,19 +321,20 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
                 if not supported_archs:
                     raise Exception("no supported architecture")
 
+                copy_tasks = []
+
                 if "amd64" in supported_archs:
                     _, amd_tmp, final_target, cmd_amd = build_arch_copy_cmd(image, "amd64", duplicates)
                     await delete_image(amd_tmp)
-                    rc, out, err = await run_cmd(cmd_amd, timeout=PER_IMAGE_TIMEOUT)
-                    if rc != 0:
-                        raise Exception(f"amd64 copy failed: {err}")
+                    copy_tasks.append(run_copy_cmd(cmd_amd, "amd64", index))
 
                 if "arm64" in supported_archs:
                     _, arm_tmp, final_target, cmd_arm = build_arch_copy_cmd(image, "arm64", duplicates)
                     await delete_image(arm_tmp)
-                    rc, out, err = await run_cmd(cmd_arm, timeout=PER_IMAGE_TIMEOUT)
-                    if rc != 0:
-                        raise Exception(f"arm64 copy failed: {err}")
+                    copy_tasks.append(run_copy_cmd(cmd_arm, "arm64", index))
+
+                # 并发执行架构copy
+                await asyncio.gather(*copy_tasks)
 
                 await delete_image(final_target)
 
