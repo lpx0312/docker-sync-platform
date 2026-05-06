@@ -21,7 +21,7 @@ ALIYUN_REGISTRY_PASSWORD = os.getenv("ALIYUN_REGISTRY_PASSWORD")
 DOCKERHUB_USERNAME = os.getenv("DOCKERHUB_USERNAME")
 DOCKERHUB_PASSWORD = os.getenv("DOCKERHUB_PASSWORD")
 
-ARCH_CACHE: Dict[str, List[str]] = {}
+IMAGE_META_CACHE: Dict[str, Dict] = {}
 
 if not all([ALIYUN_REGISTRY, ALIYUN_NAME_SPACE, ALIYUN_REGISTRY_USER, ALIYUN_REGISTRY_PASSWORD]):
     print("ERROR: missing aliyun registry env", file=sys.stderr)
@@ -168,9 +168,9 @@ def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
     return duplicates
 
 # ---------------------------
-# detect architectures
+# detect manifest type
 # ---------------------------
-async def detect_source_architectures(image: str) -> List[str]:
+async def detect_image_meta(image: str) -> Dict:
     source, _ = normalize_image_reference(image)
 
     rc, out, err = await run_cmd([
@@ -178,53 +178,58 @@ async def detect_source_architectures(image: str) -> List[str]:
     ], timeout=120)
 
     if rc != 0:
-        _log(f"[ARCH DETECT] inspect failed for {image}: {err}")
-        return []
-
-    archs = set()
+        _log(f"[META DETECT] inspect failed for {image}: {err}")
+        return {"is_multi_arch": False, "archs": []}
 
     try:
         data = json.loads(out)
 
         if "manifests" in data:
+            archs = []
             for item in data["manifests"]:
                 platform = item.get("platform", {})
                 arch = platform.get("architecture")
                 os_name = platform.get("os")
                 if os_name == "linux" and arch:
-                    archs.add(arch)
+                    archs.append(arch)
 
-        elif "architecture" in data:
-            arch = data.get("architecture")
-            os_name = data.get("os", "linux")
-            if os_name == "linux" and arch:
-                archs.add(arch)
+            return {
+                "is_multi_arch": True,
+                "archs": list(set(archs))
+            }
+
+        else:
+            arch = data.get("architecture", "unknown")
+            return {
+                "is_multi_arch": False,
+                "archs": [arch]
+            }
 
     except Exception as e:
-        _log(f"[ARCH DETECT] parse failed for {image}: {e}")
-        return []
+        _log(f"[META DETECT] parse failed for {image}: {e}")
+        return {"is_multi_arch": False, "archs": []}
 
-    return list(archs)
+async def prefetch_all_image_meta(images: List[str]):
+    global IMAGE_META_CACHE
+    _log("=== PREFETCH IMAGE META START ===")
 
-async def prefetch_all_architectures(images: List[str]):
-    global ARCH_CACHE
-    _log("=== PREFETCH IMAGE ARCHITECTURES START ===")
     sem = asyncio.Semaphore(8)
 
     async def _worker(img: str):
         async with sem:
-            archs = await detect_source_architectures(img)
-            ARCH_CACHE[img] = archs
-            _log(f"[PREFETCH] {img} -> {archs}")
+            meta = await detect_image_meta(img)
+            IMAGE_META_CACHE[img] = meta
+            _log(f"[PREFETCH] {img} -> {meta}")
 
     await asyncio.gather(*[_worker(i) for i in images])
-    _log("=== PREFETCH IMAGE ARCHITECTURES END ===")
+
+    _log("=== PREFETCH IMAGE META END ===")
 
 # ---------------------------
-# build copy cmd
+# build target
 # ---------------------------
-def build_arch_copy_cmd(image: str, arch: str, duplicates: Dict[str, bool]):
-    source, clean_name = normalize_image_reference(image)
+def build_target(image: str, duplicates: Dict[str, bool]):
+    _, clean_name = normalize_image_reference(image)
 
     image_no_digest = clean_name.split("@")[0]
     parts = image_no_digest.split("/")
@@ -236,18 +241,7 @@ def build_arch_copy_cmd(image: str, arch: str, duplicates: Dict[str, bool]):
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
 
-    tmp_target = f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}-{arch}-tmp"
-    final_target = f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}"
-
-    cmd = [
-        "skopeo", "copy",
-        "--override-os", "linux",
-        "--override-arch", arch,
-        source,
-        f"docker://{tmp_target}"
-    ]
-
-    return source, tmp_target, final_target, cmd
+    return f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}"
 
 # ---------------------------
 # delete image
@@ -260,36 +254,15 @@ async def delete_image(target: str):
     ], timeout=60)
 
 # ---------------------------
-# merge manifest
+# verify target exists
 # ---------------------------
-async def merge_manifest(final_target: str, template_target: str, index: int):
-    cmd = [
-        "manifest-tool",
-        "--username", ALIYUN_REGISTRY_USER,
-        "--password", ALIYUN_REGISTRY_PASSWORD,
-        "push", "from-args",
-        "--platforms", "linux/amd64,linux/arm64",
-        "--template", template_target,
-        "--target", final_target
-    ]
-
-    _log(f"[{index}] MERGE -> {final_target}")
-    rc, out, err = await run_cmd(cmd, timeout=300)
-    if rc != 0:
-        _log(f"[{index}] MERGE FAILED: {err}")
-        return False
-    return True
-
-# ---------------------------
-# parallel copy
-# ---------------------------
-async def run_copy_cmd(cmd: List[str], arch: str, index: int):
-    _log(f"[{index}] COPY {arch} START")
-    _log(f"[{index}] COPY {cmd}")
-    rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
-    if rc != 0:
-        raise Exception(f"{arch} copy failed: {err}")
-    _log(f"[{index}] COPY {arch} DONE")
+async def verify_target_image(target: str):
+    rc, out, err = await run_cmd([
+        "skopeo", "inspect",
+        "--creds", f"{ALIYUN_REGISTRY_USER}:{ALIYUN_REGISTRY_PASSWORD}",
+        f"docker://{target}"
+    ], timeout=60)
+    return rc == 0
 
 # ---------------------------
 # sync task
@@ -297,69 +270,37 @@ async def run_copy_cmd(cmd: List[str], arch: str, index: int):
 async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: asyncio.Semaphore, index: int):
     async with semaphore:
         start_ts = time.time()
-        final_target = ""
+        source_ref, _ = normalize_image_reference(image)
+        final_target = build_target(image, duplicates)
+        meta = IMAGE_META_CACHE.get(image, {"is_multi_arch": False, "archs": []})
 
         for attempt in range(1, RETRY_COUNT + 2):
-            amd_tmp = None
-            arm_tmp = None
-
             try:
                 _log(f"[{index}] START {image} attempt={attempt}")
-                supported_archs = ARCH_CACHE.get(image, [])
-                _log(f"[{index}] SUPPORTED ARCHS: {supported_archs}")
-
-                if not supported_archs:
-                    raise Exception("no supported architecture")
-
-                copy_tasks = []
-
-                if "amd64" in supported_archs:
-                    _, amd_tmp, final_target, cmd_amd = build_arch_copy_cmd(image, "amd64", duplicates)
-                    await delete_image(amd_tmp)
-                    copy_tasks.append(run_copy_cmd(cmd_amd, "amd64", index))
-
-                if "arm64" in supported_archs:
-                    _, arm_tmp, final_target, cmd_arm = build_arch_copy_cmd(image, "arm64", duplicates)
-                    await delete_image(arm_tmp)
-                    copy_tasks.append(run_copy_cmd(cmd_arm, "arm64", index))
-
-                await asyncio.gather(*copy_tasks)
+                _log(f"[{index}] META: {meta}")
 
                 await delete_image(final_target)
 
-                if "amd64" in supported_archs and "arm64" in supported_archs:
-                    image_name_tag = final_target.split("/")[-1]
-                    template = final_target.replace(image_name_tag, image_name_tag + "-ARCH-tmp")
+                cmd = ["skopeo", "copy"]
 
-                    merged = await merge_manifest(final_target, template, index)
-                    if not merged:
-                        raise Exception("manifest merge failed")
+                if meta["is_multi_arch"]:
+                    cmd.append("--all")
 
-                    if amd_tmp:
-                        await delete_image(amd_tmp)
-                    if arm_tmp:
-                        await delete_image(arm_tmp)
+                cmd += [
+                    source_ref,
+                    f"docker://{final_target}"
+                ]
 
-                else:
-                    single_arch = "amd64" if "amd64" in supported_archs else "arm64"
-                    source_ref, _ = normalize_image_reference(image)
+                _log(f"[{index}] CMD: {' '.join(cmd)}")
 
-                    cmd_direct = [
-                        "skopeo", "copy",
-                        "--override-os", "linux",
-                        "--override-arch", single_arch,
-                        source_ref,
-                        f"docker://{final_target}"
-                    ]
+                rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
 
-                    rc, out, err = await run_cmd(cmd_direct, timeout=PER_IMAGE_TIMEOUT)
-                    if rc != 0:
-                        raise Exception(f"single arch final push failed: {err}")
+                if rc != 0:
+                    raise Exception(err)
 
-                    if amd_tmp:
-                        await delete_image(amd_tmp)
-                    if arm_tmp:
-                        await delete_image(arm_tmp)
+                verified = await verify_target_image(final_target)
+                if not verified:
+                    raise Exception("target verify failed after copy")
 
                 elapsed = time.time() - start_ts
                 _log(f"[{index}] SUCCESS ({elapsed:.1f}s) -> {final_target}")
@@ -372,11 +313,7 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
                     _log(f"[{index}] retry after {backoff}s")
                     await asyncio.sleep(backoff)
                 else:
-                    if amd_tmp:
-                        await delete_image(amd_tmp)
-                    if arm_tmp:
-                        await delete_image(arm_tmp)
-                    return 1, final_target or image
+                    return 1, final_target
 
 # ---------------------------
 # main
@@ -390,7 +327,7 @@ async def main():
     lines = parse_images_file(IMAGES_FILE)
     duplicates = detect_duplicates(lines)
 
-    await prefetch_all_architectures(lines)
+    await prefetch_all_image_meta(lines)
 
     _log(f"TOTAL IMAGES: {len(lines)}")
     _log(f"DUPLICATES: {list(duplicates.keys())}")
