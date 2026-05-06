@@ -285,6 +285,7 @@ async def merge_manifest(final_target: str, template_target: str, index: int):
 # ---------------------------
 async def run_copy_cmd(cmd: List[str], arch: str, index: int):
     _log(f"[{index}] COPY {arch} START")
+    _log(f"[{index}] COPY {cmd}")
     rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
     if rc != 0:
         raise Exception(f"{arch} copy failed: {err}")
