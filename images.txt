@@ -1,3 +1,1 @@
-nginx:1.27.2
-quay.io/prometheus/node-exporter:v1.8.1
-maven:3.9.12-eclipse-temurin-25
+nginx:1.29.8
