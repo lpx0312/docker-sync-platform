@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple
 IMAGES_FILE = "images.txt"
 
 # 并发不要太高，DockerHub 很容易限流
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "2"))
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "6"))
 
 # 重试次数
 RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))
