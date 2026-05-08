@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 IMAGES_FILE = "images.txt"
 
@@ -29,6 +29,11 @@ ALIYUN_REGISTRY_PASSWORD = os.getenv("ALIYUN_REGISTRY_PASSWORD")
 DOCKERHUB_USERNAME = os.getenv("DOCKERHUB_USERNAME")
 DOCKERHUB_PASSWORD = os.getenv("DOCKERHUB_PASSWORD")
 
+SUPPORTED_ARCH = [
+    ("linux", "amd64"),
+    ("linux", "arm64"),
+]
+
 if not all([
     ALIYUN_REGISTRY,
     ALIYUN_NAME_SPACE,
@@ -41,6 +46,7 @@ if not all([
 # --------------------------------------------------
 # log
 # --------------------------------------------------
+
 _log_fh = None
 
 
@@ -52,7 +58,6 @@ def _open_log():
 
 def _close_log():
     global _log_fh
-
     if _log_fh:
         _log("=== END SYNC LOG ===")
         _log_fh.close()
@@ -73,7 +78,10 @@ def _log(msg: str):
 # --------------------------------------------------
 # run command
 # --------------------------------------------------
-async def run_cmd(cmd, timeout=None):
+
+async def run_cmd(cmd: List[str], timeout: int = None):
+
+    proc = None
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -95,47 +103,41 @@ async def run_cmd(cmd, timeout=None):
 
     except asyncio.TimeoutError:
 
-        try:
-            proc.kill()
-        except:
-            pass
+        if proc:
+            try:
+                proc.kill()
+            except:
+                pass
 
         return 124, "", f"TIMEOUT after {timeout}s"
 
     except Exception as e:
-
         return 125, "", str(e)
 
 
 # --------------------------------------------------
 # normalize image
 # --------------------------------------------------
+
 def normalize_image_reference(image: str):
 
     image = image.strip()
 
     if "/" in image:
-
         first_part = image.split("/")[0]
 
         # 已带 registry
         if "." in first_part or ":" in first_part or first_part == "localhost":
-
+            source_ref = f"docker://{image}"
             clean_name = image.split("/", 1)[1]
-
-            return image, clean_name
+            return source_ref, clean_name
 
     # dockerhub library
     if image.count("/") == 0:
-
-        source_ref = f"docker.io/library/{image}"
-
+        source_ref = f"docker://docker.io/library/{image}"
         clean_name = image
-
     else:
-
-        source_ref = f"docker.io/{image}"
-
+        source_ref = f"docker://docker.io/{image}"
         clean_name = image
 
     return source_ref, clean_name
@@ -144,19 +146,19 @@ def normalize_image_reference(image: str):
 # --------------------------------------------------
 # login
 # --------------------------------------------------
-async def crane_login():
+
+async def skopeo_login():
 
     _log("[LOGIN] aliyun registry")
 
     rc, out, err = await run_cmd([
-        "crane",
-        "auth",
+        "skopeo",
         "login",
-        ALIYUN_REGISTRY,
         "-u",
         ALIYUN_REGISTRY_USER,
         "-p",
-        ALIYUN_REGISTRY_PASSWORD
+        ALIYUN_REGISTRY_PASSWORD,
+        ALIYUN_REGISTRY
     ], timeout=60)
 
     if rc != 0:
@@ -168,14 +170,13 @@ async def crane_login():
         _log("[LOGIN] dockerhub")
 
         rc, out, err = await run_cmd([
-            "crane",
-            "auth",
+            "skopeo",
             "login",
-            "docker.io",
             "-u",
             DOCKERHUB_USERNAME,
             "-p",
-            DOCKERHUB_PASSWORD
+            DOCKERHUB_PASSWORD,
+            "docker.io"
         ], timeout=60)
 
         if rc != 0:
@@ -190,12 +191,11 @@ async def crane_login():
 # --------------------------------------------------
 # parse images
 # --------------------------------------------------
+
 def parse_images_file(path: str):
 
     if not os.path.exists(path):
-
         _log(f"images file not found: {path}")
-
         sys.exit(1)
 
     lines = []
@@ -220,10 +220,10 @@ def parse_images_file(path: str):
 # --------------------------------------------------
 # duplicate detect
 # --------------------------------------------------
+
 def detect_duplicates(lines: List[str]):
 
     temp_map = {}
-
     duplicates = {}
 
     for image in lines:
@@ -235,7 +235,6 @@ def detect_duplicates(lines: List[str]):
         parts = image_no_digest.split("/")
 
         image_name_tag = parts[-1]
-
         image_name = image_name_tag.split(":")[0]
 
         namespace = parts[-2] if len(parts) >= 2 else "library"
@@ -254,6 +253,7 @@ def detect_duplicates(lines: List[str]):
 # --------------------------------------------------
 # build target
 # --------------------------------------------------
+
 def build_target(image: str, duplicates: Dict[str, bool]):
 
     _, clean_name = normalize_image_reference(image)
@@ -263,14 +263,12 @@ def build_target(image: str, duplicates: Dict[str, bool]):
     parts = image_no_digest.split("/")
 
     image_name_tag = parts[-1]
-
     image_name = image_name_tag.split(":")[0]
 
     prefix = ""
 
     # 不同 namespace 同名镜像
     if image_name in duplicates:
-
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
 
@@ -278,40 +276,124 @@ def build_target(image: str, duplicates: Dict[str, bool]):
 
 
 # --------------------------------------------------
-# artifact detect
+# inspect manifest
 # --------------------------------------------------
-async def is_real_image_manifest(source_ref: str, digest: str):
+
+async def inspect_raw_manifest(source_ref: str):
 
     rc, out, err = await run_cmd([
-        "crane",
-        "manifest",
-        f"{source_ref}@{digest}"
+        "skopeo",
+        "inspect",
+        "--raw",
+        source_ref
     ], timeout=120)
 
     if rc != 0:
-        return False
+        raise Exception(err)
 
-    try:
+    return json.loads(out)
 
-        manifest_json = json.loads(out)
 
-        config = manifest_json.get("config", {})
+# --------------------------------------------------
+# sync single arch
+# --------------------------------------------------
 
-        config_media_type = config.get("mediaType", "")
+async def sync_single_arch(
+    source_ref: str,
+    target_ref: str,
+    os_name: str,
+    arch: str,
+    index: int
+):
 
-        # OCI artifact
-        if config_media_type == "application/vnd.oci.empty.v1+json":
-            return False
+    _log(f"[{index}] COPY {os_name}/{arch}")
 
-        return True
+    cmd = [
+        "skopeo",
+        "copy",
 
-    except:
-        return False
+        "--override-os", os_name,
+        "--override-arch", arch,
+
+        "--retry-times", "3",
+
+        source_ref,
+        f"docker://{target_ref}"
+    ]
+
+    rc, out, err = await run_cmd(
+        cmd,
+        timeout=PER_IMAGE_TIMEOUT
+    )
+
+    if rc != 0:
+        raise Exception(err)
+
+
+# --------------------------------------------------
+# manifest merge
+# --------------------------------------------------
+
+async def manifest_merge(
+    final_target: str,
+    temp_targets: List[str],
+    platforms: List[str],
+    index: int
+):
+
+    _log(f"[{index}] CREATE manifest list")
+
+    cmd = [
+        "manifest-tool",
+
+        "--username", ALIYUN_REGISTRY_USER,
+        "--password", ALIYUN_REGISTRY_PASSWORD,
+
+        "push",
+        "from-args",
+
+        "--platforms", ",".join(platforms),
+
+        "--template",
+        temp_targets[0].replace("-amd64-tmp", "-ARCH-tmp"),
+
+        "--target",
+        final_target
+    ]
+
+    rc, out, err = await run_cmd(
+        cmd,
+        timeout=300
+    )
+
+    if rc != 0:
+        raise Exception(err)
+
+
+# --------------------------------------------------
+# delete temp images
+# --------------------------------------------------
+
+async def delete_temp_image(target: str, index: int):
+
+    _log(f"[{index}] DELETE TEMP {target}")
+
+    rc, out, err = await run_cmd([
+        "skopeo",
+        "delete",
+        "--creds",
+        f"{ALIYUN_REGISTRY_USER}:{ALIYUN_REGISTRY_PASSWORD}",
+        f"docker://{target}"
+    ], timeout=120)
+
+    if rc != 0:
+        _log(f"[{index}] WARN delete failed: {err}")
 
 
 # --------------------------------------------------
 # sync task
 # --------------------------------------------------
+
 async def sync_image_task(
     image: str,
     duplicates: Dict[str, bool],
@@ -329,170 +411,106 @@ async def sync_image_task(
 
         for attempt in range(1, RETRY_COUNT + 2):
 
+            temp_targets = []
+
             try:
 
                 _log(f"[{index}] START {image} attempt={attempt}")
 
-                # --------------------------------------------------
-                # 获取 manifest list
-                # --------------------------------------------------
-                rc, out, err = await run_cmd([
-                    "crane",
-                    "manifest",
-                    source_ref
-                ], timeout=120)
+                raw_manifest = await inspect_raw_manifest(source_ref)
 
-                if rc != 0:
-                    raise Exception(err)
+                manifests = raw_manifest.get("manifests", [])
 
-                manifest_json = json.loads(out)
+                available_arch = set()
 
-                manifests = manifest_json.get("manifests", [])
+                for m in manifests:
 
-                if not manifests:
-                    raise Exception("no manifests found")
-
-                copied_refs = []
-
-                # --------------------------------------------------
-                # copy 每个架构
-                # --------------------------------------------------
-                for item in manifests:
-
-                    digest = item.get("digest")
-
-                    platform = item.get("platform", {})
-
-                    arch = platform.get("architecture")
+                    platform = m.get("platform", {})
 
                     os_name = platform.get("os")
+                    arch = platform.get("architecture")
 
-                    variant = platform.get("variant")
+                    available_arch.add((os_name, arch))
 
-                    # artifact 通常没 platform
-                    if not arch or not os_name:
+                valid_platforms = []
+
+                # --------------------------------------------------
+                # sync each arch
+                # --------------------------------------------------
+
+                for os_name, arch in SUPPORTED_ARCH:
+
+                    if (os_name, arch) not in available_arch:
 
                         _log(
-                            f"[{index}] SKIP artifact(no platform) "
-                            f"{digest}"
+                            f"[{index}] SKIP missing {os_name}/{arch}"
                         )
 
                         continue
 
-                    # 二次检查
-                    ok = await is_real_image_manifest(
+                    arch_suffix = arch
+
+                    temp_target = f"{final_target}-{arch_suffix}-tmp"
+
+                    await sync_single_arch(
                         source_ref,
-                        digest
+                        temp_target,
+                        os_name,
+                        arch,
+                        index
                     )
 
-                    if not ok:
+                    temp_targets.append(temp_target)
 
-                        _log(
-                            f"[{index}] SKIP artifact(empty config) "
-                            f"{digest}"
-                        )
+                    valid_platforms.append(
+                        f"{os_name}/{arch}"
+                    )
 
-                        continue
+                # --------------------------------------------------
+                # no valid image
+                # --------------------------------------------------
 
-                    src_digest_ref = f"{source_ref}@{digest}"
+                if not temp_targets:
+                    raise Exception("no supported arch found")
+
+                # --------------------------------------------------
+                # single arch
+                # --------------------------------------------------
+
+                if len(temp_targets) == 1:
 
                     _log(
-                        f"[{index}] COPY "
-                        f"{os_name}/{arch} "
-                        f"{digest}"
+                        f"[{index}] SINGLE ARCH -> retag"
                     )
 
-                    rc2, out2, err2 = await run_cmd([
-                        "crane",
+                    rc, out, err = await run_cmd([
+                        "skopeo",
                         "copy",
-                        src_digest_ref,
-                        final_target
+
+                        "--retry-times", "3",
+
+                        f"docker://{temp_targets[0]}",
+                        f"docker://{final_target}"
                     ], timeout=PER_IMAGE_TIMEOUT)
 
-                    if rc2 != 0:
-                        raise Exception(err2)
+                    if rc != 0:
+                        raise Exception(err)
 
-                    copied_refs.append({
-                        "digest": digest,
-                        "arch": arch,
-                        "os": os_name,
-                        "variant": variant
-                    })
+                else:
 
-                if not copied_refs:
-                    raise Exception("no valid image manifests")
-
-                # --------------------------------------------------
-                # 创建 manifest list
-                # --------------------------------------------------
-                _log(f"[{index}] CREATE manifest list")
-
-                await run_cmd([
-                    "docker",
-                    "manifest",
-                    "rm",
-                    final_target
-                ], timeout=30)
-
-                create_cmd = [
-                    "docker",
-                    "manifest",
-                    "create",
-                    final_target
-                ]
-
-                for item in copied_refs:
-
-                    create_cmd.append(
-                        f"{final_target}@{item['digest']}"
-                    )
-
-                rc3, out3, err3 = await run_cmd(
-                    create_cmd,
-                    timeout=120
-                )
-
-                if rc3 != 0:
-                    raise Exception(err3)
-
-                # annotate
-                for item in copied_refs:
-
-                    annotate_cmd = [
-                        "docker",
-                        "manifest",
-                        "annotate",
+                    await manifest_merge(
                         final_target,
-                        f"{final_target}@{item['digest']}",
-                        "--arch",
-                        item["arch"],
-                        "--os",
-                        item["os"]
-                    ]
-
-                    if item["variant"]:
-
-                        annotate_cmd.extend([
-                            "--variant",
-                            item["variant"]
-                        ])
-
-                    await run_cmd(
-                        annotate_cmd,
-                        timeout=60
+                        temp_targets,
+                        valid_platforms,
+                        index
                     )
 
-                # push
-                rc4, out4, err4 = await run_cmd([
-                    "docker",
-                    "manifest",
-                    "push",
-                    "--purge",
-                    final_target
-                ], timeout=PER_IMAGE_TIMEOUT)
+                # --------------------------------------------------
+                # delete temp
+                # --------------------------------------------------
 
-                if rc4 != 0:
-                    raise Exception(err4)
+                for item in temp_targets:
+                    await delete_temp_image(item, index)
 
                 elapsed = time.time() - start_ts
 
@@ -512,9 +530,18 @@ async def sync_image_task(
                     f"attempt={attempt}: {err_msg}"
                 )
 
+                # 清理临时镜像
+                for item in temp_targets:
+                    try:
+                        await delete_temp_image(item, index)
+                    except:
+                        pass
+
+                # DockerHub rate limit 特殊退避
                 if "toomanyrequests" in err_msg.lower():
                     backoff = 300
                 else:
+                    # 指数退避
                     backoff = min(30 * (2 ** (attempt - 1)), 300)
 
                 if attempt <= RETRY_COUNT:
@@ -524,13 +551,13 @@ async def sync_image_task(
                     await asyncio.sleep(backoff)
 
                 else:
-
                     return 1, final_target
 
 
 # --------------------------------------------------
 # main
 # --------------------------------------------------
+
 async def main():
 
     _open_log()
@@ -542,7 +569,7 @@ async def main():
         f"PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}"
     )
 
-    await crane_login()
+    await skopeo_login()
 
     lines = parse_images_file(IMAGES_FILE)
 
@@ -563,7 +590,6 @@ async def main():
     results = await asyncio.gather(*tasks)
 
     success = 0
-
     failed = []
 
     for rc, target in results:
@@ -576,11 +602,9 @@ async def main():
     _log("===== SUMMARY =====")
 
     _log(f"SUCCESS: {success}")
-
     _log(f"FAILED : {len(failed)}")
 
     if failed:
-
         for item in failed:
             _log(f"FAILED IMAGE: {item}")
 
