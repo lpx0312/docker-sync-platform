@@ -1,13 +1,13 @@
-mirror.gcr.io/moby/buildkit:v0.20.1
-mirror.gcr.io/moby/buildkit:latest
-mirror.gcr.io/linuxserver/mods:universal-internationalization
-mirror.gcr.io/linuxserver/chromium:version-7cd99b64
+moby/buildkit:v0.20.1
+moby/buildkit:latest
+linuxserver/mods:universal-internationalization
+linuxserver/chromium:version-7cd99b64
 registry.k8s.io/e2e-test-images/agnhost:2.40
 registry.k8s.io/e2e-test-images/agnhost:2.39
 
-mirror.gcr.io/tonistiigi/binfmt:qemu-v9.2.2
-mirror.gcr.io/tonistiigi/binfmt:latest
-mirror.gcr.io/multiarch/qemu-user-static:7.2.0-1
-mirror.gcr.io/multiarch/qemu-user-static:latest
+tonistiigi/binfmt:qemu-v9.2.2
+tonistiigi/binfmt:latest
+multiarch/qemu-user-static:7.2.0-1
+multiarch/qemu-user-static:latest
 
-mirror.gcr.io/goharbor/migrate-chart:1.0.0
+goharbor/migrate-chart:1.0.0
