@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import json
+import shlex
 from typing import List, Dict, Tuple
 
 IMAGES_FILE = "images.txt"
@@ -92,6 +93,18 @@ def normalize_image_reference(image: str):
         clean_name = image
     return source_ref, clean_name
 
+def dockerhub_inspect_copy_refs(source_ref: str) -> List[str]:
+    """
+    For images on docker.io only: try mirror.gcr.io first, then docker.io.
+    mirror.gcr.io mirrors Docker Hub with the same path (library/... or user/...).
+    """
+    prefix = "docker://docker.io/"
+    if not source_ref.startswith(prefix):
+        return [source_ref]
+    suffix = source_ref[len(prefix) :]
+    mirror_ref = f"docker://mirror.gcr.io/{suffix}"
+    return [mirror_ref, source_ref]
+
 # ------------------ login ------------------
 
 async def skopeo_login():
@@ -170,45 +183,72 @@ def build_target(image: str, duplicates: Dict[str, bool]):
 
 # ------------------ inspect architectures ------------------
 
-async def inspect_architectures(image: str) -> Tuple[str, List[Tuple[str,str]]]:
-    rc, out, err = await run_cmd(["skopeo", "inspect", "--raw", f"docker://{image}"], timeout=60)
-    if rc != 0:
-        raise Exception(f"inspect failed: {err}")
-    data = json.loads(out)
-    arch_list = []
-    if data.get("manifests"):
-        # multi-arch
-        for m in data["manifests"]:
-            plat = m.get("platform")
-            if plat and (plat.get("os"), plat.get("architecture")) in SUPPORTED_ARCH:
-                arch_list.append((plat.get("os"), plat.get("architecture")))
-        return "multi", arch_list
-    else:
-        # single-arch
-        config = data.get("config")
-        if config:
-            os_name = config.get("os", "linux")
-            arch = config.get("architecture", "amd64")
-            arch_list.append((os_name, arch))
-        else:
-            # fallback
-            arch_list.append(("linux","amd64"))
-        return "single", arch_list
+def _format_arch_list(arch_list: List[Tuple[str, str]]) -> str:
+    return ", ".join(f"{os_name}/{arch}" for os_name, arch in arch_list) if arch_list else "(none)"
+
+async def inspect_architectures(source_ref: str, index: int) -> Tuple[str, List[Tuple[str, str]]]:
+    """
+    Inspect manifest; for docker.io images try mirror.gcr.io first, then docker.io.
+    Returns (img_type, arch_list).
+    """
+    refs = dockerhub_inspect_copy_refs(source_ref)
+    last_err = ""
+    for ref in refs:
+        rc, out, err = await run_cmd(["skopeo", "inspect", "--raw", ref], timeout=60)
+        if rc == 0:
+            data = json.loads(out)
+            arch_list: List[Tuple[str, str]] = []
+            if data.get("manifests"):
+                img_type = "multi"
+                for m in data["manifests"]:
+                    plat = m.get("platform")
+                    if plat and (plat.get("os"), plat.get("architecture")) in SUPPORTED_ARCH:
+                        arch_list.append((plat.get("os"), plat.get("architecture")))
+            else:
+                img_type = "single"
+                config = data.get("config")
+                if config:
+                    os_name = config.get("os", "linux")
+                    arch = config.get("architecture", "amd64")
+                    arch_list.append((os_name, arch))
+                else:
+                    arch_list.append(("linux", "amd64"))
+            wl = _format_arch_list(list(SUPPORTED_ARCH))
+            _log(
+                f"[{index}] INSPECT ok via {ref} | type={img_type} "
+                f"matched_platforms=[{_format_arch_list(arch_list)}] whitelist={wl}"
+            )
+            return img_type, arch_list
+        last_err = err
+        _log(f"[{index}] INSPECT fail via {ref}: {err.strip() or '(no stderr)'}")
+    raise Exception(f"inspect failed (tried {len(refs)} ref(s)): {last_err}")
 
 # ------------------ sync single arch ------------------
 
-async def sync_single_arch(source_ref: str, target_ref: str, os_name: str, arch: str, index: int):
-    _log(f"[{index}] COPY {os_name}/{arch}")
-    cmd = [
-        "skopeo", "copy",
-        "--override-os", os_name,
-        "--override-arch", arch,
-        "--retry-times", "3",
-        source_ref, f"docker://{target_ref}"
-    ]
-    rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
-    if rc != 0:
-        raise Exception(err)
+async def sync_single_arch(
+    source_refs: List[str], target_ref: str, os_name: str, arch: str, index: int
+):
+    """
+    For docker.io images source_refs is [mirror.gcr.io, docker.io]; try in order until one succeeds.
+    """
+    last_err = ""
+    for ri, source_ref in enumerate(source_refs):
+        _log(f"[{index}] COPY {os_name}/{arch} source={ri + 1}/{len(source_refs)} {source_ref}")
+        cmd = [
+            "skopeo", "copy",
+            "--override-os", os_name,
+            "--override-arch", arch,
+            "--retry-times", "3",
+            source_ref, f"docker://{target_ref}",
+        ]
+        _log(f"[{index}] SKOPEO_COPY: {shlex.join(cmd)}")
+        rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
+        if rc == 0:
+            return
+        last_err = err
+        if ri < len(source_refs) - 1:
+            _log(f"[{index}] COPY fail, next source: {err.strip() or '(no stderr)'}")
+    raise Exception(last_err)
 
 # ------------------ manifest merge ------------------
 
@@ -248,6 +288,7 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
         start_ts = time.time()
         source_ref, _ = normalize_image_reference(image)
         final_target = build_target(image, duplicates)
+        copy_refs = dockerhub_inspect_copy_refs(source_ref)
 
         for attempt in range(1, RETRY_COUNT + 2):
             temp_targets = []
@@ -255,12 +296,12 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
             try:
                 _log(f"[{index}] START {image} attempt={attempt}")
 
-                img_type, arch_list = await inspect_architectures(image)
+                img_type, arch_list = await inspect_architectures(source_ref, index)
 
                 if img_type == "single" or len(arch_list) < len(SUPPORTED_ARCH):
                     # 单架构或者缺失某些白名单架构
                     os_name, arch = arch_list[0]
-                    await sync_single_arch(source_ref, final_target, os_name, arch, index)
+                    await sync_single_arch(copy_refs, final_target, os_name, arch, index)
                     elapsed = time.time() - start_ts
                     _log(f"[{index}] SUCCESS ({elapsed:.1f}s) -> {final_target}")
                     return 0, final_target
@@ -270,7 +311,7 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
                     if (os_name, arch) not in arch_list:
                         continue
                     temp_target = f"{final_target}-{arch}-tmp"
-                    await sync_single_arch(source_ref, temp_target, os_name, arch, index)
+                    await sync_single_arch(copy_refs, temp_target, os_name, arch, index)
                     temp_targets.append(temp_target)
                     valid_platforms.append(f"{os_name}/{arch}")
 
