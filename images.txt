@@ -1,1 +1,1 @@
-goharbor/migrate-chart:1.0.0
+moby/buildkit:v0.20.1
