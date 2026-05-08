@@ -1,1 +1,1 @@
-moby/buildkit:latest
+moby/buildkit:v0.20.1
