@@ -1,1 +1,4 @@
-registry.k8s.io/e2e-test-images/agnhost:2.39
+registry.k8s.io/e2e-test-images/agnhost:2.40
+moby/buildkit:v0.29.0
+moby/buildkit:v0.20.1
+goharbor/migrate-chart:1.0.0
