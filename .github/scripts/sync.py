@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
+import json
 import os
 import sys
 import time
@@ -10,7 +11,7 @@ from typing import List, Dict, Tuple
 IMAGES_FILE = "images.txt"
 
 # 并发不要太高，DockerHub 很容易限流
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "6"))
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "4"))
 
 # 重试次数
 RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))
@@ -51,6 +52,7 @@ def _open_log():
 
 def _close_log():
     global _log_fh
+
     if _log_fh:
         _log("=== END SYNC LOG ===")
         _log_fh.close()
@@ -71,7 +73,8 @@ def _log(msg: str):
 # --------------------------------------------------
 # run command
 # --------------------------------------------------
-async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
+async def run_cmd(cmd: List[str], timeout: int = None):
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -91,6 +94,7 @@ async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
         )
 
     except asyncio.TimeoutError:
+
         try:
             proc.kill()
         except:
@@ -106,6 +110,7 @@ async def run_cmd(cmd: List[str], timeout: int = None) -> Tuple[int, str, str]:
 # normalize image
 # --------------------------------------------------
 def normalize_image_reference(image: str):
+
     image = image.strip()
 
     if "/" in image:
@@ -118,10 +123,10 @@ def normalize_image_reference(image: str):
 
     # dockerhub library
     if image.count("/") == 0:
-        source_ref = f"library/{image}"
+        source_ref = f"docker.io/library/{image}"
         clean_name = image
     else:
-        source_ref = image
+        source_ref = f"docker.io/{image}"
         clean_name = image
 
     return source_ref, clean_name
@@ -176,7 +181,7 @@ async def crane_login():
 # --------------------------------------------------
 # parse images
 # --------------------------------------------------
-def parse_images_file(path: str) -> List[str]:
+def parse_images_file(path: str):
 
     if not os.path.exists(path):
         _log(f"images file not found: {path}")
@@ -204,7 +209,7 @@ def parse_images_file(path: str) -> List[str]:
 # --------------------------------------------------
 # duplicate detect
 # --------------------------------------------------
-def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
+def detect_duplicates(lines: List[str]):
 
     temp_map = {}
     duplicates = {}
@@ -253,11 +258,25 @@ def build_target(image: str, duplicates: Dict[str, bool]):
 
     # 不同 namespace 同名镜像
     if image_name in duplicates:
-
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
 
     return f"{ALIYUN_REGISTRY}/{ALIYUN_NAME_SPACE}/{prefix}{image_name_tag}"
+
+
+# --------------------------------------------------
+# filter manifest
+# --------------------------------------------------
+def is_supported_manifest(manifest_item):
+
+    media_type = manifest_item.get("mediaType", "")
+
+    allowed = [
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.v2+json"
+    ]
+
+    return media_type in allowed
 
 
 # --------------------------------------------------
@@ -284,24 +303,154 @@ async def sync_image_task(
 
                 _log(f"[{index}] START {image} attempt={attempt}")
 
-                cmd = [
+                # ----------------------------------------
+                # 1. 获取 manifest index
+                # ----------------------------------------
+                rc, out, err = await run_cmd([
                     "crane",
-                    "copy",
-
-                    source_ref,
-
-                    final_target
-                ]
-
-                _log(f"[{index}] CMD: {' '.join(cmd)}")
-
-                rc, out, err = await run_cmd(
-                    cmd,
-                    timeout=PER_IMAGE_TIMEOUT
-                )
+                    "manifest",
+                    source_ref
+                ], timeout=120)
 
                 if rc != 0:
                     raise Exception(err)
+
+                manifest_json = json.loads(out)
+
+                manifests = manifest_json.get("manifests", [])
+
+                if not manifests:
+                    raise Exception("no manifests found")
+
+                # ----------------------------------------
+                # 2. 过滤 artifact
+                # ----------------------------------------
+                filtered = []
+
+                for item in manifests:
+
+                    media_type = item.get("mediaType", "")
+
+                    if is_supported_manifest(item):
+                        filtered.append(item)
+                    else:
+                        _log(
+                            f"[{index}] SKIP artifact mediaType={media_type}"
+                        )
+
+                if not filtered:
+                    raise Exception("all manifests filtered")
+
+                # ----------------------------------------
+                # 3. copy 每个架构 digest
+                # ----------------------------------------
+                copied_manifests = []
+
+                for item in filtered:
+
+                    digest = item["digest"]
+
+                    platform = item.get("platform", {})
+
+                    arch = platform.get("architecture", "unknown")
+
+                    os_name = platform.get("os", "linux")
+
+                    src_digest_ref = f"{source_ref}@{digest}"
+
+                    _log(
+                        f"[{index}] COPY "
+                        f"{os_name}/{arch} "
+                        f"{digest}"
+                    )
+
+                    rc2, out2, err2 = await run_cmd([
+                        "crane",
+                        "copy",
+                        src_digest_ref,
+                        final_target
+                    ], timeout=PER_IMAGE_TIMEOUT)
+
+                    if rc2 != 0:
+                        raise Exception(err2)
+
+                    copied_manifests.append({
+                        "digest": digest,
+                        "platform": platform
+                    })
+
+                # ----------------------------------------
+                # 4. 创建新的 manifest list
+                # ----------------------------------------
+                _log(f"[{index}] CREATE manifest list")
+
+                rc3, out3, err3 = await run_cmd([
+                    "docker",
+                    "manifest",
+                    "rm",
+                    final_target
+                ], timeout=30)
+
+                manifest_create_cmd = [
+                    "docker",
+                    "manifest",
+                    "create",
+                    final_target
+                ]
+
+                for item in copied_manifests:
+                    manifest_create_cmd.append(
+                        f"{final_target}@{item['digest']}"
+                    )
+
+                rc4, out4, err4 = await run_cmd(
+                    manifest_create_cmd,
+                    timeout=120
+                )
+
+                if rc4 != 0:
+                    raise Exception(err4)
+
+                # annotate
+                for item in copied_manifests:
+
+                    platform = item["platform"]
+
+                    arch = platform.get("architecture")
+
+                    os_name = platform.get("os")
+
+                    variant = platform.get("variant")
+
+                    annotate_cmd = [
+                        "docker",
+                        "manifest",
+                        "annotate",
+                        final_target,
+                        f"{final_target}@{item['digest']}",
+                        "--arch", arch,
+                        "--os", os_name
+                    ]
+
+                    if variant:
+                        annotate_cmd.extend([
+                            "--variant",
+                            variant
+                        ])
+
+                    await run_cmd(annotate_cmd, timeout=60)
+
+                # push
+                rc5, out5, err5 = await run_cmd([
+                    "docker",
+                    "manifest",
+                    "push",
+                    "--purge",
+                    final_target
+                ], timeout=PER_IMAGE_TIMEOUT)
+
+                if rc5 != 0:
+                    raise Exception(err5)
 
                 elapsed = time.time() - start_ts
 
@@ -321,11 +470,9 @@ async def sync_image_task(
                     f"attempt={attempt}: {err_msg}"
                 )
 
-                # DockerHub rate limit 特殊退避
                 if "toomanyrequests" in err_msg.lower():
                     backoff = 300
                 else:
-                    # 指数退避
                     backoff = min(30 * (2 ** (attempt - 1)), 300)
 
                 if attempt <= RETRY_COUNT:
