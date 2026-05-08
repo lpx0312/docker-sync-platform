@@ -1,1 +1,1 @@
-moby/buildkit:v0.29.0
+tonistiigi/binfmt:latest
