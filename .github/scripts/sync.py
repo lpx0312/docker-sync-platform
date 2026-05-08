@@ -300,20 +300,14 @@ async def sync_single_arch(
     cmd = [
         "skopeo",
         "copy",
-
         "--override-os", os_name,
         "--override-arch", arch,
-
         "--retry-times", "3",
-
         source_ref,
         f"docker://{target_ref}"
     ]
 
-    rc, out, err = await run_cmd(
-        cmd,
-        timeout=PER_IMAGE_TIMEOUT
-    )
+    rc, out, err = await run_cmd(cmd, timeout=PER_IMAGE_TIMEOUT)
 
     if rc != 0:
         raise Exception(err)
@@ -329,33 +323,29 @@ async def manifest_merge(
     index: int
 ):
 
+    if not valid_platforms:
+        _log(f"[{index}] SKIP manifest merge, no valid platforms")
+        return
+
     _log(f"[{index}] CREATE manifest list")
 
     template = final_target + "-ARCH-tmp"
 
     cmd = [
         "manifest-tool",
-
         "--username", ALIYUN_REGISTRY_USER,
         "--password", ALIYUN_REGISTRY_PASSWORD,
-
         "push",
         "from-args",
-
         "--platforms",
         ",".join(valid_platforms),
-
         "--template",
         template,
-
         "--target",
         final_target
     ]
 
-    rc, out, err = await run_cmd(
-        cmd,
-        timeout=300
-    )
+    rc, out, err = await run_cmd(cmd, timeout=300)
 
     if rc != 0:
         raise Exception(err)
@@ -429,16 +419,11 @@ async def sync_image_task(
 
                         temp_targets.append(temp_target)
 
-                        valid_platforms.append(
-                            f"{os_name}/{arch}"
-                        )
+                        valid_platforms.append(f"{os_name}/{arch}")
 
                     except Exception as e:
 
-                        _log(
-                            f"[{index}] SKIP {os_name}/{arch}: {e}"
-                        )
-
+                        _log(f"[{index}] SKIP {os_name}/{arch}: {e}")
                         continue
 
                 # --------------------------------------------------
@@ -454,19 +439,14 @@ async def sync_image_task(
 
                 if len(temp_targets) == 1:
 
-                    _log(
-                        f"[{index}] SINGLE ARCH -> retag"
-                    )
+                    _log(f"[{index}] SINGLE ARCH -> retag")
 
                     rc, out, err = await run_cmd([
                         "skopeo",
                         "copy",
-
                         "--retry-times", "3",
-
                         f"docker://{temp_targets[0]}",
                         f"docker://{final_target}"
-
                     ], timeout=PER_IMAGE_TIMEOUT)
 
                     if rc != 0:
@@ -478,11 +458,7 @@ async def sync_image_task(
 
                 else:
 
-                    await manifest_merge(
-                        final_target,
-                        valid_platforms,
-                        index
-                    )
+                    await manifest_merge(final_target, valid_platforms, index)
 
                 # --------------------------------------------------
                 # delete temp
@@ -493,10 +469,7 @@ async def sync_image_task(
 
                 elapsed = time.time() - start_ts
 
-                _log(
-                    f"[{index}] SUCCESS "
-                    f"({elapsed:.1f}s) -> {final_target}"
-                )
+                _log(f"[{index}] SUCCESS ({elapsed:.1f}s) -> {final_target}")
 
                 return 0, final_target
 
@@ -504,14 +477,10 @@ async def sync_image_task(
 
                 err_msg = str(e)
 
-                _log(
-                    f"[{index}] FAILED "
-                    f"attempt={attempt}: {err_msg}"
-                )
+                _log(f"[{index}] FAILED attempt={attempt}: {err_msg}")
 
                 # 清理临时镜像
                 for item in temp_targets:
-
                     try:
                         await delete_temp_image(item, index)
                     except:
@@ -524,11 +493,8 @@ async def sync_image_task(
                     backoff = min(30 * (2 ** (attempt - 1)), 300)
 
                 if attempt <= RETRY_COUNT:
-
                     _log(f"[{index}] retry after {backoff}s")
-
                     await asyncio.sleep(backoff)
-
                 else:
                     return 1, final_target
 
@@ -541,12 +507,7 @@ async def main():
 
     _open_log()
 
-    _log(
-        f"CONFIG: "
-        f"MAX_CONCURRENT={MAX_CONCURRENT} "
-        f"RETRY_COUNT={RETRY_COUNT} "
-        f"PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}"
-    )
+    _log(f"CONFIG: MAX_CONCURRENT={MAX_CONCURRENT} RETRY_COUNT={RETRY_COUNT} PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}")
 
     await skopeo_login()
 
@@ -561,10 +522,7 @@ async def main():
 
     sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-    tasks = [
-        sync_image_task(img, duplicates, sem, i)
-        for i, img in enumerate(lines, 1)
-    ]
+    tasks = [sync_image_task(img, duplicates, sem, i) for i, img in enumerate(lines, 1)]
 
     results = await asyncio.gather(*tasks)
 
@@ -572,19 +530,16 @@ async def main():
     failed = []
 
     for rc, target in results:
-
         if rc == 0:
             success += 1
         else:
             failed.append(target)
 
     _log("===== SUMMARY =====")
-
     _log(f"SUCCESS: {success}")
     _log(f"FAILED : {len(failed)}")
 
     if failed:
-
         for item in failed:
             _log(f"FAILED IMAGE: {item}")
 
