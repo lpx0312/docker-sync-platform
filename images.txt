@@ -1,1 +1,1 @@
-moby/buildkit:v0.29.0
+tonistiigi/binfmt:qemu-v9.2.2
