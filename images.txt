@@ -1,2 +1,1 @@
 moby/buildkit:latest
-tonistiigi/binfmt:latest
