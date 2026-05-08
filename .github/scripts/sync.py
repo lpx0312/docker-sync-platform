@@ -270,16 +270,10 @@ async def sync_image_task(
                     "skopeo",
                     "copy",
                 
-                    # multiarch
+                    # 永远开启 multiarch
                     "--all",
                 
-                    # 关键：兼容 ACR 个人版
-                    "--format", "v2s2",
-                
-                    # 去掉 OCI signature / artifact
-                    "--remove-signatures",
-                
-                    # retry
+                    # 减少 layer 重复下载
                     "--retry-times", "3",
                 
                     source_ref,
