@@ -1,8 +1,3 @@
-rockylinux:9
-rockylinux:9-minimal
-rockylinux:8.9.20231119
-rockylinux:9.4
-rockylinux:9.3.20231119
-rockylinux:8
-rockylinux:8-minimal
-rockylinux:8.9
+jenkins/jenkins:2.319.1-jdk11
+jenkins/jenkins:2.345-jdk11
+jenkins/jenkins:2.346
