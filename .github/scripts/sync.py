@@ -6,7 +6,7 @@ import json
 import os
 import sys
 import time
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 IMAGES_FILE = "images.txt"
 
@@ -73,7 +73,7 @@ def _log(msg: str):
 # --------------------------------------------------
 # run command
 # --------------------------------------------------
-async def run_cmd(cmd: List[str], timeout: int = None):
+async def run_cmd(cmd, timeout=None):
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -103,6 +103,7 @@ async def run_cmd(cmd: List[str], timeout: int = None):
         return 124, "", f"TIMEOUT after {timeout}s"
 
     except Exception as e:
+
         return 125, "", str(e)
 
 
@@ -114,19 +115,27 @@ def normalize_image_reference(image: str):
     image = image.strip()
 
     if "/" in image:
+
         first_part = image.split("/")[0]
 
         # 已带 registry
         if "." in first_part or ":" in first_part or first_part == "localhost":
+
             clean_name = image.split("/", 1)[1]
+
             return image, clean_name
 
     # dockerhub library
     if image.count("/") == 0:
+
         source_ref = f"docker.io/library/{image}"
+
         clean_name = image
+
     else:
+
         source_ref = f"docker.io/{image}"
+
         clean_name = image
 
     return source_ref, clean_name
@@ -184,7 +193,9 @@ async def crane_login():
 def parse_images_file(path: str):
 
     if not os.path.exists(path):
+
         _log(f"images file not found: {path}")
+
         sys.exit(1)
 
     lines = []
@@ -212,6 +223,7 @@ def parse_images_file(path: str):
 def detect_duplicates(lines: List[str]):
 
     temp_map = {}
+
     duplicates = {}
 
     for image in lines:
@@ -258,6 +270,7 @@ def build_target(image: str, duplicates: Dict[str, bool]):
 
     # 不同 namespace 同名镜像
     if image_name in duplicates:
+
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
 
@@ -265,18 +278,35 @@ def build_target(image: str, duplicates: Dict[str, bool]):
 
 
 # --------------------------------------------------
-# filter manifest
+# artifact detect
 # --------------------------------------------------
-def is_supported_manifest(manifest_item):
+async def is_real_image_manifest(source_ref: str, digest: str):
 
-    media_type = manifest_item.get("mediaType", "")
+    rc, out, err = await run_cmd([
+        "crane",
+        "manifest",
+        f"{source_ref}@{digest}"
+    ], timeout=120)
 
-    allowed = [
-        "application/vnd.oci.image.manifest.v1+json",
-        "application/vnd.docker.distribution.manifest.v2+json"
-    ]
+    if rc != 0:
+        return False
 
-    return media_type in allowed
+    try:
+
+        manifest_json = json.loads(out)
+
+        config = manifest_json.get("config", {})
+
+        config_media_type = config.get("mediaType", "")
+
+        # OCI artifact
+        if config_media_type == "application/vnd.oci.empty.v1+json":
+            return False
+
+        return True
+
+    except:
+        return False
 
 
 # --------------------------------------------------
@@ -303,9 +333,9 @@ async def sync_image_task(
 
                 _log(f"[{index}] START {image} attempt={attempt}")
 
-                # ----------------------------------------
-                # 1. 获取 manifest index
-                # ----------------------------------------
+                # --------------------------------------------------
+                # 获取 manifest list
+                # --------------------------------------------------
                 rc, out, err = await run_cmd([
                     "crane",
                     "manifest",
@@ -322,39 +352,47 @@ async def sync_image_task(
                 if not manifests:
                     raise Exception("no manifests found")
 
-                # ----------------------------------------
-                # 2. 过滤 artifact
-                # ----------------------------------------
-                filtered = []
+                copied_refs = []
 
+                # --------------------------------------------------
+                # copy 每个架构
+                # --------------------------------------------------
                 for item in manifests:
 
-                    media_type = item.get("mediaType", "")
-
-                    if is_supported_manifest(item):
-                        filtered.append(item)
-                    else:
-                        _log(
-                            f"[{index}] SKIP artifact mediaType={media_type}"
-                        )
-
-                if not filtered:
-                    raise Exception("all manifests filtered")
-
-                # ----------------------------------------
-                # 3. copy 每个架构 digest
-                # ----------------------------------------
-                copied_manifests = []
-
-                for item in filtered:
-
-                    digest = item["digest"]
+                    digest = item.get("digest")
 
                     platform = item.get("platform", {})
 
-                    arch = platform.get("architecture", "unknown")
+                    arch = platform.get("architecture")
 
-                    os_name = platform.get("os", "linux")
+                    os_name = platform.get("os")
+
+                    variant = platform.get("variant")
+
+                    # artifact 通常没 platform
+                    if not arch or not os_name:
+
+                        _log(
+                            f"[{index}] SKIP artifact(no platform) "
+                            f"{digest}"
+                        )
+
+                        continue
+
+                    # 二次检查
+                    ok = await is_real_image_manifest(
+                        source_ref,
+                        digest
+                    )
+
+                    if not ok:
+
+                        _log(
+                            f"[{index}] SKIP artifact(empty config) "
+                            f"{digest}"
+                        )
+
+                        continue
 
                     src_digest_ref = f"{source_ref}@{digest}"
 
@@ -374,53 +412,51 @@ async def sync_image_task(
                     if rc2 != 0:
                         raise Exception(err2)
 
-                    copied_manifests.append({
+                    copied_refs.append({
                         "digest": digest,
-                        "platform": platform
+                        "arch": arch,
+                        "os": os_name,
+                        "variant": variant
                     })
 
-                # ----------------------------------------
-                # 4. 创建新的 manifest list
-                # ----------------------------------------
+                if not copied_refs:
+                    raise Exception("no valid image manifests")
+
+                # --------------------------------------------------
+                # 创建 manifest list
+                # --------------------------------------------------
                 _log(f"[{index}] CREATE manifest list")
 
-                rc3, out3, err3 = await run_cmd([
+                await run_cmd([
                     "docker",
                     "manifest",
                     "rm",
                     final_target
                 ], timeout=30)
 
-                manifest_create_cmd = [
+                create_cmd = [
                     "docker",
                     "manifest",
                     "create",
                     final_target
                 ]
 
-                for item in copied_manifests:
-                    manifest_create_cmd.append(
+                for item in copied_refs:
+
+                    create_cmd.append(
                         f"{final_target}@{item['digest']}"
                     )
 
-                rc4, out4, err4 = await run_cmd(
-                    manifest_create_cmd,
+                rc3, out3, err3 = await run_cmd(
+                    create_cmd,
                     timeout=120
                 )
 
-                if rc4 != 0:
-                    raise Exception(err4)
+                if rc3 != 0:
+                    raise Exception(err3)
 
                 # annotate
-                for item in copied_manifests:
-
-                    platform = item["platform"]
-
-                    arch = platform.get("architecture")
-
-                    os_name = platform.get("os")
-
-                    variant = platform.get("variant")
+                for item in copied_refs:
 
                     annotate_cmd = [
                         "docker",
@@ -428,20 +464,26 @@ async def sync_image_task(
                         "annotate",
                         final_target,
                         f"{final_target}@{item['digest']}",
-                        "--arch", arch,
-                        "--os", os_name
+                        "--arch",
+                        item["arch"],
+                        "--os",
+                        item["os"]
                     ]
 
-                    if variant:
+                    if item["variant"]:
+
                         annotate_cmd.extend([
                             "--variant",
-                            variant
+                            item["variant"]
                         ])
 
-                    await run_cmd(annotate_cmd, timeout=60)
+                    await run_cmd(
+                        annotate_cmd,
+                        timeout=60
+                    )
 
                 # push
-                rc5, out5, err5 = await run_cmd([
+                rc4, out4, err4 = await run_cmd([
                     "docker",
                     "manifest",
                     "push",
@@ -449,8 +491,8 @@ async def sync_image_task(
                     final_target
                 ], timeout=PER_IMAGE_TIMEOUT)
 
-                if rc5 != 0:
-                    raise Exception(err5)
+                if rc4 != 0:
+                    raise Exception(err4)
 
                 elapsed = time.time() - start_ts
 
@@ -482,6 +524,7 @@ async def sync_image_task(
                     await asyncio.sleep(backoff)
 
                 else:
+
                     return 1, final_target
 
 
