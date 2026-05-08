@@ -1,1 +1,1 @@
-tonistiigi/binfmt:latest
+goharbor/migrate-chart:1.0.0
