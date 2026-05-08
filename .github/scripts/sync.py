@@ -206,20 +206,44 @@ async def inspect_image_archs(source_ref: str):
     rc, out, err = await run_cmd(["skopeo", "inspect", "--raw", source_ref], timeout=60)
     if rc != 0:
         raise Exception(f"skopeo inspect failed: {err}")
-    data = json.loads(out)
+
+    try:
+        data = json.loads(out)
+    except Exception as e:
+        raise Exception(f"parse inspect json failed: {e}")
+
     archs = set()
-    if "manifests" in data:  # multi-arch manifest
+
+    # multi-arch manifest list
+    if isinstance(data, dict) and "manifests" in data:
         for m in data["manifests"]:
             plat = m.get("platform", {})
             os_name = plat.get("os")
             arch = plat.get("architecture")
-            if (os_name, arch) in SUPPORTED_ARCH:
+            if os_name and arch and (os_name, arch) in SUPPORTED_ARCH:
                 archs.add((os_name, arch))
-    else:  # single-arch
+
+    # single-arch image
+    else:
         os_name = data.get("os")
         arch = data.get("architecture")
-        if (os_name, arch) in SUPPORTED_ARCH:
+
+        # 如果 os 或 arch 没有，尝试从 config 中获取
+        if not os_name or not arch:
+            config_digest = data.get("config", {}).get("digest")
+            if config_digest:
+                rc2, out2, err2 = await run_cmd(["skopeo", "inspect", source_ref], timeout=30)
+                if rc2 == 0:
+                    try:
+                        info = json.loads(out2)
+                        os_name = info.get("Architecture")
+                        arch = info.get("Os")
+                    except:
+                        pass
+
+        if os_name and arch and (os_name, arch) in SUPPORTED_ARCH:
             archs.add((os_name, arch))
+
     return list(archs)
 
 # --------------------------------------------------
