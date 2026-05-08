@@ -407,11 +407,9 @@ async def sync_image_task(
             try:
                 _log(f"[{index}] START {image} attempt={attempt}")
 
-                # �遍历白名单架构
+                # 遍历白名单架构同步
                 for os_name, arch in SUPPORTED_ARCH:
-
                     temp_target = f"{final_target}-{arch}-tmp"
-
                     try:
                         await sync_single_arch(
                             source_ref,
@@ -429,7 +427,7 @@ async def sync_image_task(
                 if not temp_targets:
                     raise Exception("no supported arch found")
 
-                # 成功一个架构 -> 直接 retag
+                # 仅单架构成功 → retag
                 if len(temp_targets) == 1:
                     _log(f"[{index}] SINGLE ARCH -> retag")
                     rc, out, err = await run_cmd([
@@ -441,7 +439,7 @@ async def sync_image_task(
                     if rc != 0:
                         raise Exception(err)
 
-                # 成功两个架构 -> manifest merge
+                # 多架构成功 → manifest merge
                 elif len(temp_targets) == 2:
                     await manifest_merge(final_target, valid_platforms, index)
 
@@ -465,10 +463,7 @@ async def sync_image_task(
                         pass
 
                 # DockerHub rate limit 特殊退避
-                if "toomanyrequests" in err_msg.lower():
-                    backoff = 300
-                else:
-                    backoff = min(30 * (2 ** (attempt - 1)), 300)
+                backoff = 300 if "toomanyrequests" in err_msg.lower() else min(30 * (2 ** (attempt - 1)), 300)
 
                 if attempt <= RETRY_COUNT:
                     _log(f"[{index}] retry after {backoff}s")
