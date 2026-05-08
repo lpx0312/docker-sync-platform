@@ -1,9 +1,5 @@
-mariadb:10.0.38
-mariadb:10.1.48
-mariadb:10.11.11
-mariadb:10.2.44
-mariadb:10.3.39
-mariadb:10.4.34
-mariadb:10.5.28
-mariadb:10.6.21
-mariadb:5.5.64
+jenkins/jenkins:2.319.1-jdk11
+jenkins/jenkins:2.345-jdk11
+jenkins/jenkins:2.346
+jenkins/jenkins:2.453
+jenkins/jenkins:2.453-jdk11
