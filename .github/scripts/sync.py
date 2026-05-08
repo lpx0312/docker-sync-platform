@@ -323,8 +323,8 @@ async def sync_image_task(image: str, duplicates: Dict[str, bool], semaphore: as
                     await manifest_merge(final_target, valid_platforms, index)
 
                 # 删除临时镜像
-                for item in temp_targets:
-                    await delete_temp_image(item, index)
+                #for item in temp_targets:
+                #    await delete_temp_image(item, index)
 
                 elapsed = time.time() - start_ts
                 _log(f"[{index}] SUCCESS ({elapsed:.1f}s) -> {final_target}")
