@@ -1,13 +1,2 @@
-moby/buildkit:v0.20.1
 moby/buildkit:latest
-linuxserver/mods:universal-internationalization
-linuxserver/chromium:version-7cd99b64
-registry.k8s.io/e2e-test-images/agnhost:2.40
-registry.k8s.io/e2e-test-images/agnhost:2.39
-
-tonistiigi/binfmt:qemu-v9.2.2
 tonistiigi/binfmt:latest
-multiarch/qemu-user-static:7.2.0-1
-multiarch/qemu-user-static:latest
-
-goharbor/migrate-chart:1.0.0
