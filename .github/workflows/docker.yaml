@@ -20,5 +20,14 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
+
+    - name: Install manifest-tool
+      run: |
+        curl -LO https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz
+        tar -zxvf go-containerregistry_Linux_x86_64.tar.gz
+        sudo mv crane /usr/local/bin/
+        chmod a+x /usr/local/bin/crane
+        crane version
+        
     - name: Sync images using Skopeo (Python Fast Sync)
       run: python3 .github/scripts/sync.py
