@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple
 
 IMAGES_FILE = "images.txt"
 
-MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "6"))
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "8"))
 RETRY_COUNT = int(os.getenv("RETRY_COUNT", "2"))
 PER_IMAGE_TIMEOUT = int(os.getenv("PER_IMAGE_TIMEOUT", str(20 * 60)))
 LOG_FILE = os.getenv("SYNC_LOG_FILE", "sync.log")
