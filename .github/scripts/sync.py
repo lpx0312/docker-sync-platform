@@ -269,13 +269,19 @@ async def sync_image_task(
                 cmd = [
                     "skopeo",
                     "copy",
-
-                    # 永远开启 multiarch
+                
+                    # multiarch
                     "--all",
-
-                    # 减少 layer 重复下载
+                
+                    # 关键：兼容 ACR 个人版
+                    "--format", "v2s2",
+                
+                    # 去掉 OCI signature / artifact
+                    "--remove-signatures",
+                
+                    # retry
                     "--retry-times", "3",
-
+                
                     source_ref,
                     f"docker://{final_target}"
                 ]
