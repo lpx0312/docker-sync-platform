@@ -60,6 +60,7 @@ def _close_log():
 def _log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     line = f"[{ts}] {msg}"
+
     print(line, flush=True)
 
     if _log_fh:
@@ -112,16 +113,15 @@ def normalize_image_reference(image: str):
 
         # 已带 registry
         if "." in first_part or ":" in first_part or first_part == "localhost":
-            source_ref = f"docker://{image}"
             clean_name = image.split("/", 1)[1]
-            return source_ref, clean_name
+            return image, clean_name
 
     # dockerhub library
     if image.count("/") == 0:
-        source_ref = f"docker://docker.io/library/{image}"
+        source_ref = f"library/{image}"
         clean_name = image
     else:
-        source_ref = f"docker://docker.io/{image}"
+        source_ref = image
         clean_name = image
 
     return source_ref, clean_name
@@ -130,17 +130,19 @@ def normalize_image_reference(image: str):
 # --------------------------------------------------
 # login
 # --------------------------------------------------
-async def skopeo_login():
+async def crane_login():
+
     _log("[LOGIN] aliyun registry")
 
     rc, out, err = await run_cmd([
-        "skopeo",
+        "crane",
+        "auth",
         "login",
+        ALIYUN_REGISTRY,
         "-u",
         ALIYUN_REGISTRY_USER,
         "-p",
-        ALIYUN_REGISTRY_PASSWORD,
-        ALIYUN_REGISTRY
+        ALIYUN_REGISTRY_PASSWORD
     ], timeout=60)
 
     if rc != 0:
@@ -148,22 +150,25 @@ async def skopeo_login():
         sys.exit(1)
 
     if DOCKERHUB_USERNAME and DOCKERHUB_PASSWORD:
+
         _log("[LOGIN] dockerhub")
 
         rc, out, err = await run_cmd([
-            "skopeo",
+            "crane",
+            "auth",
             "login",
+            "docker.io",
             "-u",
             DOCKERHUB_USERNAME,
             "-p",
-            DOCKERHUB_PASSWORD,
-            "docker.io"
+            DOCKERHUB_PASSWORD
         ], timeout=60)
 
         if rc != 0:
             _log(f"[WARN] dockerhub login failed: {err}")
         else:
             _log("[LOGIN] dockerhub success")
+
     else:
         _log("[WARN] dockerhub credential not found, skip login")
 
@@ -172,6 +177,7 @@ async def skopeo_login():
 # parse images
 # --------------------------------------------------
 def parse_images_file(path: str) -> List[str]:
+
     if not os.path.exists(path):
         _log(f"images file not found: {path}")
         sys.exit(1)
@@ -179,7 +185,9 @@ def parse_images_file(path: str) -> List[str]:
     lines = []
 
     with open(path, "r", encoding="utf-8") as fh:
+
         for raw in fh:
+
             line = raw.strip()
 
             if not line:
@@ -197,10 +205,12 @@ def parse_images_file(path: str) -> List[str]:
 # duplicate detect
 # --------------------------------------------------
 def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
+
     temp_map = {}
     duplicates = {}
 
     for image in lines:
+
         _, clean_name = normalize_image_reference(image)
 
         image_no_digest = clean_name.split("@")[0]
@@ -208,13 +218,16 @@ def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
         parts = image_no_digest.split("/")
 
         image_name_tag = parts[-1]
+
         image_name = image_name_tag.split(":")[0]
 
         namespace = parts[-2] if len(parts) >= 2 else "library"
 
         if image_name in temp_map:
+
             if temp_map[image_name] != namespace:
                 duplicates[image_name] = True
+
         else:
             temp_map[image_name] = namespace
 
@@ -225,6 +238,7 @@ def detect_duplicates(lines: List[str]) -> Dict[str, bool]:
 # build target
 # --------------------------------------------------
 def build_target(image: str, duplicates: Dict[str, bool]):
+
     _, clean_name = normalize_image_reference(image)
 
     image_no_digest = clean_name.split("@")[0]
@@ -232,12 +246,14 @@ def build_target(image: str, duplicates: Dict[str, bool]):
     parts = image_no_digest.split("/")
 
     image_name_tag = parts[-1]
+
     image_name = image_name_tag.split(":")[0]
 
     prefix = ""
 
     # 不同 namespace 同名镜像
     if image_name in duplicates:
+
         if len(parts) >= 2:
             prefix = parts[-2] + "_"
 
@@ -253,6 +269,7 @@ async def sync_image_task(
     semaphore: asyncio.Semaphore,
     index: int
 ):
+
     async with semaphore:
 
         start_ts = time.time()
@@ -264,20 +281,16 @@ async def sync_image_task(
         for attempt in range(1, RETRY_COUNT + 2):
 
             try:
+
                 _log(f"[{index}] START {image} attempt={attempt}")
 
                 cmd = [
-                    "skopeo",
+                    "crane",
                     "copy",
-                
-                    # 永远开启 multiarch
-                    "--all",
-                
-                    # 减少 layer 重复下载
-                    "--retry-times", "3",
-                
+
                     source_ref,
-                    f"docker://{final_target}"
+
+                    final_target
                 ]
 
                 _log(f"[{index}] CMD: {' '.join(cmd)}")
@@ -316,8 +329,11 @@ async def sync_image_task(
                     backoff = min(30 * (2 ** (attempt - 1)), 300)
 
                 if attempt <= RETRY_COUNT:
+
                     _log(f"[{index}] retry after {backoff}s")
+
                     await asyncio.sleep(backoff)
+
                 else:
                     return 1, final_target
 
@@ -326,6 +342,7 @@ async def sync_image_task(
 # main
 # --------------------------------------------------
 async def main():
+
     _open_log()
 
     _log(
@@ -335,7 +352,7 @@ async def main():
         f"PER_IMAGE_TIMEOUT={PER_IMAGE_TIMEOUT}"
     )
 
-    await skopeo_login()
+    await crane_login()
 
     lines = parse_images_file(IMAGES_FILE)
 
@@ -356,9 +373,11 @@ async def main():
     results = await asyncio.gather(*tasks)
 
     success = 0
+
     failed = []
 
     for rc, target in results:
+
         if rc == 0:
             success += 1
         else:
@@ -367,9 +386,11 @@ async def main():
     _log("===== SUMMARY =====")
 
     _log(f"SUCCESS: {success}")
+
     _log(f"FAILED : {len(failed)}")
 
     if failed:
+
         for item in failed:
             _log(f"FAILED IMAGE: {item}")
 
