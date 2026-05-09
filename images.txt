@@ -1,1 +1,13 @@
-jc21/nginx-proxy-manager:2.10.3
+calico/cni:v3.26.4
+calico/csi:v3.26.4
+calico/kube-controllers:v3.26.4
+calico/node-driver-registrar:v3.26.4
+calico/node:v3.26.4
+calico/pod2daemon-flexvol:v3.26.4
+calico/typha:v3.26.4
+quay.io/tigera/operator:v1.30.9
+apacherocketmq/rocketmq-dashboard:1.0.0
+apacherocketmq/rocketmq-dashboard:2.0.0
+apacherocketmq/rocketmq-dashboard:2.0.1
+apacherocketmq/rocketmq-dashboard:2.1.0
+mitmproxy/mitmproxy:11.1.2
