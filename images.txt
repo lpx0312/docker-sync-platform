@@ -1,1 +1,1 @@
-nacos/nacos-server:v1.4.8
+ nexus3:3.78.0
