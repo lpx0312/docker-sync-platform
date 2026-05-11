@@ -1,2 +1,1 @@
-tonistiigi/binfmt:qemu-v9.2.2
-
+nacos/nacos-server:v1.4.8
