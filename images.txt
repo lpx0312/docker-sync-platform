@@ -1,1 +1,1 @@
- nexus3:3.78.0
+nginx:alpine
