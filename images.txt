@@ -1,11 +1,6 @@
-gradle:4.10.2-jdk11
-gradle:4.10.2-jdk8
-gradle:6.9.4-jdk8-jammy
-gradle:6.9.4-jdk11-jammy
-gradle:6.9.4-jdk17-jammy
-gradle:7.6.4-jdk8-jammy
-gradle:7.6.4-jdk11-jammy
-gradle:7.6.4-jdk17-jammy
-gradle:8.13.0-jdk8-jammy
-gradle:8.13.0-jdk11-jammy
-gradle:8.13.0-jdk17-jammy
+golang:1.21.13-bookworm
+golang:1.22.12-bookworm
+golang:1.23.12-bookworm
+golang:1.24.13-bookworm
+golang:1.25.10-bookworm
+golang:1.26.3-bookworm
