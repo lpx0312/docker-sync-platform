@@ -1,6 +1,1 @@
-golang:1.21.13-bookworm
-golang:1.22.12-bookworm
-golang:1.23.12-bookworm
-golang:1.24.13-bookworm
-golang:1.25.10-bookworm
-golang:1.26.3-bookworm
+registry.k8s.io/ingress-nginx/controller:v1.10.1
